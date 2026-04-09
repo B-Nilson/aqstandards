@@ -11,3 +11,12 @@ RoxygenNote: 7.3.3
 Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
+Imports: 
+    dplyr,
+    handyr (>= 0.0.0.9000),
+    lubridate,
+    stats,
+    stringr,
+    tidyr
+Remotes:  
+    B-Nilson/handyr
