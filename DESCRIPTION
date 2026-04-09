@@ -15,8 +15,9 @@ Imports:
     dplyr,
     handyr (>= 0.0.0.9000),
     lubridate,
+    purrr,
     stats,
     stringr,
     tidyr
-Remotes:  
+Remotes: 
     B-Nilson/handyr
