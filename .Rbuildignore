@@ -1,5 +1,6 @@
-^renv$
-^renv\.lock$
+^.uvr$
+^uvr\.lock$
+^uvr\.toml$
 ^aqstandards\.Rproj$
 ^\.Rproj\.user$
 ^[.]?air[.]toml$

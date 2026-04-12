@@ -1,0 +1,17 @@
+[project]
+name = "aqstandards"
+description = "What the Package Does (One Line, Title Case)"
+
+[dependencies]
+dplyr = "*"
+lubridate = "*"
+purrr = "*"
+stats = "*"
+stringr = "*"
+tidyr = "*"
+
+[dev-dependencies]
+testthat = ">=3.0.0"
+
+[dev-dependencies.handyr]
+git = "B-Nilson/handyr"
