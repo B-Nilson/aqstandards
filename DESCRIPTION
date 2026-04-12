@@ -1,9 +1,12 @@
 Package: aqstandards
-Title: What the Package Does (One Line, Title Case)
+Title: Air Quality Standards
 Version: 0.0.0.9000
 Authors@R: 
     person("Brayden", "Nilson", , "nilson.brayden@gmail.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+Description: 
+    This package provides functions to calculate various air quality standards such as the Canadian Ambient Air Quality Standards (CAAQS) and the British Columbia Air Quality Objectives (BCAQO). 
+    The functions take in concentration data and return attainment status for each pollutant and averaging period. 
+    The package is designed to be used by air quality professionals and researchers who need to calculate attainment status for air quality monitoring data.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
