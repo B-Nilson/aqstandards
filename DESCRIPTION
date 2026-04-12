@@ -21,3 +21,5 @@ Imports:
     tidyr
 Remotes: 
     B-Nilson/handyr
+URL: https://github.com/B-Nilson/aqstandards
+BugReports: https://github.com/B-Nilson/aqstandards/issues
