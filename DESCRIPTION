@@ -19,6 +19,7 @@ Imports:
     handyr (>= 0.0.0.9000),
     lubridate,
     purrr,
+    rlang,
     stats,
     stringr,
     tidyr
@@ -26,3 +27,4 @@ Remotes:
     B-Nilson/handyr
 URL: https://github.com/B-Nilson/aqstandards
 BugReports: https://github.com/B-Nilson/aqstandards/issues
+LazyData: true
