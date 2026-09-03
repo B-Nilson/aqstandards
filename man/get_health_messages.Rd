@@ -4,13 +4,12 @@
 \alias{get_health_messages}
 \title{Get health messages for AQHI+ risk categories}
 \usage{
-get_health_messages(
-  risk_categories = c("Low", "Moderate", "High", "Very High"),
-  language = "en"
-)
+get_health_messages(risk_categories = NULL, language = "en")
 }
 \arguments{
-\item{risk_categories}{A factor or character vector of AQHI risk categories (Low, Moderate, High, Very High).}
+\item{risk_categories}{(Optional).
+A factor or character vector of AQHI risk categories (e.g. Low, Moderate, High, Very High).
+If NULL (the default) all risk categories are returned, in \code{language}.}
 
 \item{language}{(Optional).
 A single character value indicating the language to use for risk levels and health messaging.
@@ -23,12 +22,12 @@ A tibble of health messages (for at risk population and general population) for 
 \description{
 Health messages for at risk population and general population are available for each AQHI health risk category (see \code{\link{get_risk_category}}).
 
-English messages:\tabular{llll}{
+English messages returned by this function:\tabular{llll}{
    Risk \tab AQHI \tab At Risk Population \tab General Population \cr
-   Low \tab 1 - 3 \tab Enjoy your usual outdoor activities. \tab Ideal air quality for outdoor activities. \cr
-   Moderate \tab 4 - 6 \tab Consider reducing or rescheduling strenuous activities outdoors if you are experiencing symptoms. \tab No need to modify your usual outdoor activities unless you experience symptoms such as coughing and throat irritation. \cr
-   High \tab 7 - 10 \tab Reduce or reschedule strenuous activities outdoors. Children and the elderly should also take it easy. \tab Consider reducing or rescheduling strenuous activities outdoors if you experience symptoms such as coughing and throat irritation. \cr
-   Very High \tab >10 \tab Avoid strenuous activities outdoors. Children and the elderly should also avoid outdoor physical exertion. \tab Reduce or reschedule strenuous activities outdoors, especially if you experience symptoms such as coughing and throat irritation. \cr
+   Low \tab 1 - 3 \tab Enjoy your usual activities. \tab Ideal air quality for outdoor activities. \cr
+   Moderate \tab 4 - 6 \tab Consider reducing or rescheduling activities outdoors if you experience symptoms. \tab No need to modify your usual activities unless you experience symptoms. \cr
+   High \tab 7 - 10 \tab Reduce or reschedule activities outdoors. \tab Consider reducing or rescheduling activities outdoors if you experience symptoms. \cr
+   Very High \tab >10 \tab Avoid strenuous activity outdoors. \tab Reduce or reschedule activities outdoors, especially if you experience symptoms. \cr
 }
 
 

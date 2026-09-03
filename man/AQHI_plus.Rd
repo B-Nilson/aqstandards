@@ -17,8 +17,8 @@ Must be a single value or the same length as \code{dates} or a single value (whi
 
 \item{min_allowed_pm25}{(Optional).
 A single numeric value indicating the minimum allowed concentration.
-All values in \code{pm25_1hr_ugm3} less than this will be replaced with NA.
-Default is 0 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}.}
+All values in \code{pm25_1hr_ugm3} less than this will be replaced with \code{NA}.
+Default is 0 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}, meaning negative values are treated as missing.}
 
 \item{detailed}{(Optional).
 A single logical value indicating if a tibble with levels, risk categories, health messages, etc should be returned.
@@ -31,14 +31,18 @@ Must be either "en" (English) or "fr" (French). Not case sensitive.
 Default is "en".}
 }
 \value{
-If \code{detailed} is TRUE:
+If \code{detailed = TRUE}:
 \itemize{
-\item A tibble (data.frame) with columns detailing the AQHI+, risk level, health messages, etc
+\item A tibble (data.frame) with one row per input value and columns:
+\code{pm25_1hr_ugm3} (input concentration after invalid values are set to \code{NA}),
+\code{level}, \code{colour}, \code{risk}, \code{high_risk_pop_message}, and \code{general_pop_message}.
 }
 
-If \code{detailed} is FALSE:
+If \code{detailed = FALSE}:
 \itemize{
-\item A factor vector of AQHI+ levels with \code{length(pm25_1hr_ugm3)} elements
+\item A factor vector of AQHI+ levels with \code{length(pm25_1hr_ugm3)} elements.
+Factor levels are ordered \code{"1"}, \code{"2"}, ..., \code{"10"}, \code{"+"}; missing/invalid
+input is returned as \code{NA} (i.e. \verb{<NA>}).
 }
 }
 \description{
@@ -49,43 +53,68 @@ Unlike the AQHI which uses 3-hourly mean averages,
 AQHI+ is calculated using hourly mean averages.
 The AQHI+ overrides the AQHI if it exceeds the AQHI for a particular hour.
 
-AQHI+ categorizes hourly \ifelse{html}{\out{PM<sub>2.5</sub>}}{\eqn{PM_{2.5}}} concentrations into
-10 equal bins from 0 to 100 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}} (AQHI+ 1-10),
-and assigns "+" to values greater than 100 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}.
-The risk categories match the Canadian AQHI and share the same health messaging:
-\itemize{
-\item Low:  AQHI+ of 1-3, or a concentration of 0-30 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}
-\item Moderate: AQHI+ of 4-6, or a concentration of 30.1-60 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}
-\item High: AQHI+ of 7-10, or a concentration of 60.1-100 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}
-\item Very High: AQHI+ of +, or a concentration above 100 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}
-}
-
 The AQHI+ was originally published by Yao et al (2019): \doi{doi:10.17269/s41997-019-00237-w},
 and has been adopted by all* Canadian provinces/territories as of 2024.
 (*except Québec where they use the AQI instead of the AQHI/AQHI+).
+}
+\details{
+This function implements the PM2.5-based AQHI+ mapping described by
+Yao et al. (2019) and current Environment and Climate Change Canada guidance,
+and is intended as a stable reference implementation for downstream packages.
+\subsection{Scientific contract}{
 
-Quote from Yao et al (2019):
-
-This algorithm is a linear extrapolation based on two anchor points:
-\enumerate{
-\item the AQHI-Plus value should reach 7 (high risk category),
-when 1-h PM2.5 concentrations are over 60 ug/m3.
-This is consistent with [...] the analyses of the likelihood of exceeding the 25 ug/m3 24-h threshold value; and
-\item the AQHI-Plus value should reach 4 (moderate risk category)
-when the 1-h PM2.5 concentrations are over 30 ug/m3,
-which is the threshold for odour perception of burning softwood
-(Kistler et al. 2012: \doi{doi:10.1016/j.atmosenv.2012.01.044}),
-the major type of forest species in [British Columbia].
+The input is the \strong{1-hour mean \ifelse{html}{\out{PM<sub>2.5</sub>}}{\eqn{PM_{2.5}}} concentration in
+\ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}, as a numeric (or units) vector.}
+AQHI+ levels are \code{1} through \code{10}, plus \code{"+"} for concentrations above 100
+\ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}.
+Level bins are 10 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}} wide with
+\strong{right-closed boundaries}, so a concentration exactly on a multiple of 10 falls in the bin
+starting at that value (e.g. 30 is level 3, 30.1 is level 4):\tabular{rcll}{
+   PM2.5 1-hour mean (\ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}) \tab AQHI+ level \tab Risk (en) \tab Risk (fr) \cr
+   0 to 10 \tab 1 \tab Low \tab Faible \cr
+   >10 to 20 \tab 2 \tab Low \tab Faible \cr
+   >20 to 30 \tab 3 \tab Low \tab Faible \cr
+   >30 to 40 \tab 4 \tab Moderate \tab Modéré \cr
+   >40 to 50 \tab 5 \tab Moderate \tab Modéré \cr
+   >50 to 60 \tab 6 \tab Moderate \tab Modéré \cr
+   >60 to 70 \tab 7 \tab High \tab Elevé \cr
+   >70 to 80 \tab 8 \tab High \tab Elevé \cr
+   >80 to 90 \tab 9 \tab High \tab Elevé \cr
+   >90 to 100 \tab 10 \tab High \tab Elevé \cr
+   >100 \tab + \tab Very High \tab Très Elevé \cr
 }
 
-[...]
 
-These conclusions suggest that the AQHI is most indicative of the mortality and
-circulatory risks during periods affected by wildfire smoke.
-However, the [...] AQHI-Plus is most indicative of the respiratory risks
-during high-intensity fire periods, particularly for people with asthma.
-This is consistent with the rationale behind the AQHI formulation
-and with existing health evidence related to the effects of wildfire smoke.
+The health-relevant concentration boundaries that follow from the binning above are:
+\itemize{
+\item \strong{Low}: PM2.5 \ifelse{html}{\out{&le; 30}}{<= 30} (levels 1-3);
+\item \strong{Moderate}: \ifelse{html}{\out{&gt;30}}{>30} to 60 (levels 4-6);
+\item \strong{High}: \ifelse{html}{\out{&gt;60}}{>60} to 100 (levels 7-10);
+\item \strong{Very High}: \ifelse{html}{\out{&gt;100}}{>100} (level \code{"+"}).
+}
+
+Basis (Yao et al. 2019): the level bins are a linear extrapolation anchored on two points,
+namely that the AQHI+ reaches 4 (moderate risk) once 1-h \ifelse{html}{\out{PM<sub>2.5</sub>}}{\eqn{PM_{2.5}}}
+exceeds 30 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}} (the odour perception threshold for
+burning softwood; Kistler et al. 2012: \doi{doi:10.1016/j.atmosenv.2012.01.044}) and reaches 7 (high risk)
+once 1-h \ifelse{html}{\out{PM<sub>2.5</sub>}}{\eqn{PM_{2.5}}} exceeds 60 \ifelse{html}{\out{&mu;g m<sup>-3</sup>}}{\eqn{ug m^{-3}}}.
+
+This mapping is the versioned public contract of the package: it must not change
+without a version bump, regression tests, and release notes.
+}
+
+\subsection{Missing and invalid input}{
+
+The invalid-input policy is explicit and deliberate:
+\itemize{
+\item \strong{Missing input stays missing.} \code{NA} values produce \code{NA} levels/risk and are returned as-is.
+\item \strong{Non-finite values are not valid concentrations.} \code{NaN}, \code{Inf}, and \code{-Inf} are treated as missing (\code{NA}).
+\item \strong{Concentrations below \code{min_allowed_pm25} are treated as missing.} The default of 0 therefore treats all
+negative concentrations as invalid/missing rather than binning them into level 1.
+}
+
+The official/display representation is preserved: \verb{10+} is reported as the level \code{"+"}, never as a numeric \code{11}.
+}
 }
 \examples{
 # Hourly pm2.5 concentrations
