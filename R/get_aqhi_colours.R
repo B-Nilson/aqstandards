@@ -56,45 +56,27 @@ get_aqhi_colours <- function(values = c(1:10, "+", NA), types = "aqhi") {
     all(tolower(types) %in% c("aqhi", "pm25_1hr"))
   )
 
-  # Define colours
-  AQHI_colours <- c(
-    "#21C6F5",
-    "#189ACA",
-    "#0D6797",
-    "#FFFD37",
-    "#FFCC2E",
-    "#FE9A3F",
-    "#FD6769",
-    "#FF3B3B",
-    "#FF0101",
-    "#CB0713",
-    "#650205",
-    "#bbbbbb"
-  )
-
   # Convert type to lowercase and ensure right length
   types <- tolower(types)
   if (length(types) == 1) {
     types <- rep(types, length(values))
   }
 
-  # Generate aqhi levels from pm25 where needed
+  # Generate aqhi level labels from pm25 using the shared AQHI+ engine
+  # (not the exported renderer, which would re-validate and rebuild a tibble)
   is_pm25 <- types %in% "pm25_1hr"
   if (any(is_pm25)) {
-    values[is_pm25] <- values[is_pm25] |>
-      AQHI_plus(detailed = FALSE) |>
+    values[is_pm25] <- aqhi_plus_map(values[is_pm25])$level |>
       as.character()
   }
-  values[!is_pm25 & values == "11"] <- "+"
 
-  # Convert factors to integer values (1-11, or NA)
-  aqhi_levels <- values |>
-    factor(levels = c(1:10, "+")) |>
-    as.numeric()
+  # Normalize everything to level labels, mapping the legacy numeric "11"
+  # spelling of 10+ to "+"
+  level_labels <- as.character(values)
+  level_labels[!is_pm25 & level_labels == "11"] <- "+"
 
-  # Replace missing AQHI levels with 12 (missing)
-  aqhi_levels[is.na(aqhi_levels)] <- 12
-
-  # Match up AQHI levels with colours
-  AQHI_colours[aqhi_levels]
+  # Look up colours by level; anything without a level (NA, invalid) is grey
+  colours <- .aqhi_level_colours()[level_labels]
+  colours[is.na(colours)] <- .aqhi_missing_colour
+  unname(colours)
 }

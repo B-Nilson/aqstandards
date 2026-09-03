@@ -161,7 +161,7 @@ AQHI <- function(
         pm25_3hr_ugm3 = NA_real_,
         o3_3hr_ppb = NA_real_,
         no2_3hr_ppb = NA_real_,
-        AQHI = NA_real_ |> factor(levels = c(1:10, "+")),
+        AQHI = NA_real_ |> factor(levels = .aqhi_levels),
         AQHI_plus = .data$level,
         AQHI_plus_exceeds_AQHI = !is.na(.data$level),
         AQHI_pm25_ratio = NA_real_,
@@ -170,7 +170,7 @@ AQHI <- function(
       ) |>
       dplyr::select(dplyr::all_of(.aqhi_columns))
   } else {
-    aqhi_plus <- data.frame(level = NA_real_ |> factor(levels = c(1:10, "+")))
+    aqhi_plus <- data.frame(level = NA_real_ |> factor(levels = .aqhi_levels))
   }
 
   # If no non-missing NO2 / O3 provided, return AQHI+
@@ -233,7 +233,7 @@ AQHI <- function(
   if (allow_aqhi_plus_override) {
     AQHI_obs <- AQHI_obs |> override_AQHI_with_AQHI_plus()
   } else {
-    AQHI_obs$AQHI_plus <- NA_real_ |> factor(levels = c(1:10, "+"))
+    AQHI_obs$AQHI_plus <- NA_real_ |> factor(levels = .aqhi_levels)
     AQHI_obs$AQHI_plus_exceeds_AQHI <- FALSE
     AQHI_obs$level <- AQHI_obs$AQHI
   }
@@ -286,14 +286,13 @@ get_AQHI <- function(pm25_rolling_3hr, no2_rolling_3hr, o3_rolling_3hr) {
   combined_fractions <- o3_fraction + no2_fraction + pm25_fraction
   decimal_aqhi <- 10 / 10.4 * 100 * combined_fractions
 
-  # Convert to factor from 1-10, "+", or NA
-  aqhi_breakpoints <- c(-Inf, 1:10, Inf) |>
-    stats::setNames(c(NA, 1:10, "+"))
+  # Convert to factor from 1-10, "+", or NA (rounded value is the AQHI level)
+  aqhi_breakpoints <- c(-Inf, 1:10, Inf)
   aqhi <- decimal_aqhi |>
     round() |> # round to nearest integer
     cut(
       breaks = aqhi_breakpoints,
-      labels = names(aqhi_breakpoints[-1])
+      labels = .aqhi_levels
     )
 
   # Combine with relative contributions and return
@@ -324,6 +323,6 @@ override_AQHI_with_AQHI_plus <- function(AQHI_obs) {
           yes = as.character(.data$AQHI_plus),
           no = as.character(.data$AQHI)
         ) |>
-        factor(levels = c(1:10, "+"))
+        factor(levels = .aqhi_levels)
     )
 }

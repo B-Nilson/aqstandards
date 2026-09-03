@@ -34,40 +34,15 @@ get_risk_category <- function(aqhi_levels = c(1:10, "+"), language = "en") {
       is.numeric(aqhi_levels) |
       all(is.na(aqhi_levels)),
     length(aqhi_levels) > 0,
-    as.character(aqhi_levels) %in% c(1:10, "+", NA)
+    as.character(aqhi_levels) %in% c(.aqhi_levels, NA)
   )
-  stopifnot(tolower(language) %in% c("en", "fr"), length(language) == 1)
+  language <- .check_language(language)
 
-  # Extract language-specific risk categories
-  language <- tolower(language)
-  risk_categories <- .risk_categories[[language]]
-
-  # Repeat each risk category for each AQHI level within it
-  aqhi_labels <- risk_categories |>
-    seq_along() |>
-    sapply(
-      \(i) names(risk_categories)[i] |> rep(length(risk_categories[[i]]))
-    )
-
-  # Convert to factor with categories as labels
+  # One risk category label per level, in level order, from the shared scale
+  # table (R/aqhi_tables.R) -- the sole owner of risk-group membership.
   aqhi_levels |>
     factor(
-      levels = unlist(risk_categories),
-      labels = unlist(aqhi_labels)
+      levels = .aqhi_levels,
+      labels = .aqhi_level_risk(language)
     )
 }
-
-.risk_categories <- list(
-  en = list(
-    Low = 1:3,
-    Moderate = 4:6,
-    High = 7:10,
-    "Very High" = "+"
-  ),
-  fr = list(
-    Faible = 1:3,
-    "Mod\u00e9r\u00e9" = 4:6,
-    "Elev\u00e9" = 7:10,
-    "Tr\u00e8s Elev\u00e9" = "+"
-  )
-)

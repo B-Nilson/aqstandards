@@ -6,6 +6,27 @@
 
 The goal of aqstandards is to provide an easy interface for assessing various air quality standards and indices.
 
+## Development: internal architecture (AQHI/AQHI+)
+
+For contributors touching the AQHI/AQHI+ scope, the level scale and its data
+have a single owner, `R/aqhi_tables.R` (see the module map in its header):
+
+- `R/aqhi_tables.R` - the level scale (1-10, "+"), risk-group membership,
+  per-level colours, and en/fr risk labels and health messages, plus the
+  read-only accessors `.aqhi_level_risk()`, `.aqhi_level_colours()`, and
+  `.aqhi_risk_messages()`.
+- `R/aqhi_plus.R` - AQHI+ engine: invalid-input policy and PM2.5 binning in
+  the internal `aqhi_plus_map()`, and the exported `AQHI_plus()` renderer.
+- `R/aqhi.R` - the 3-pollutant AQHI engine (rolling means, formula, AQHI+
+  override) and its renderer.
+- `R/get_risk_category.R`, `R/get_health_messages.R`, `R/get_aqhi_colours.R`
+  - thin lookups over the tables (level -> risk, risk -> messages,
+    level/PM2.5 -> colour). They own no data.
+
+Data flows one way: tables -> engines -> lookups -> output. Engine internals
+must be reused (e.g. `get_aqhi_colours(types = "pm25_1hr")` calls
+`aqhi_plus_map()`), never the exported renderers.
+
 ## Installation
 
 You can install the development version of aqstandards like so:
