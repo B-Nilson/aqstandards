@@ -40,6 +40,11 @@ exercise the identical shared code paths and differ only in the
 pollutant name and percentile; see fixtures no2_daily_exceedance_retention,
 no2_annual_row_exception and no2_50pct_quarter_exception.
 
+Input handling (issue #4): the GDADs legislate no input validation, so
+non-contiguous dates, sub-hourly spacing, and NA inputs are pinned as
+behaviour contracts (see fixtures noncontiguous_*, non_hourly_spacing,
+all_na_*).
+
 Provenance legend: **GDAD** = the expectation follows from quoted
 guidance-document wording (cited per fixture); **PIN** = the expectation
 pins current behaviour that the guidance does not uniquely determine.
@@ -68,6 +73,11 @@ Fixture index:
 16. `pm25_daily_and_annual_gates` - PM2.5 daily 18-of-24 hours and annual 75%/60% gates (no exceptions)
 17. `pm25_rounding_cascade` - PM2.5 one-step rounding cascade (Appendix D)
 18. `band_edge_classification` - Management-level band edges (Air Zone Management GDAD Appendix 2)
+19. `noncontiguous_sparse_days` - Non-contiguous input dates: absent rows are filled, then gated
+20. `noncontiguous_row_order` - Non-contiguous input dates: row order does not matter
+21. `non_hourly_spacing` - Sub-hourly sampling density is tolerated, not an error
+22. `all_na_year` - An all-NA year drops out gracefully with a warning
+23. `all_na_column` - An all-NA pollutant column is a clean stop, not a crash
 
 ## two_of_three_metric_rule
 
@@ -742,5 +752,143 @@ Exact expected output (computed):
 # result
       62 62.00001       57     56.9       51     50.9 
 "Orange"    "Red" "Orange" "Yellow" "Yellow"  "Green" 
+```
+
+## noncontiguous_sparse_days
+
+**Non-contiguous input dates: absent rows are filled, then gated** (GDAD)
+
+Rule: No GDAD rule forbids sparse input: absent dates are treated as missing hours. The NO2 GDAD (2020) Table 5-3 days criteria then gate the result: 2022 supplies only four isolated days (2022-01-15, 2022-03-03, 2022-07-09, 2022-11-28) at 40 ppb, so 4/365 days (1.1%) < 75% of days and each quarter holds 1 day (~1%) < 60%: 2022 contributes no metric rows. 2021/2023 are complete at 40 ppb.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    no2 <- rep(40, length(hours))
+    no2[hours >= lubridate::ymd_h("2022-01-01 00") & hours < 
+        lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    for (day in c("2022-01-15", "2022-03-03", "2022-07-09", "2022-11-28")) {
+        no2[hours %in% make_hours(paste0(day, " 00"), paste0(day, 
+            " 23"))] <- 40
+    }
+    CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
+```
+
+Expected: Rows only for 2021 and 2023, each perc_98 = 40 (the ordered daily maxima are all 40). The all-NA 2022 hours are filled rows, not input errors.
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 2 × 2
+   year perc_98_of_daily_maxima
+  <dbl>                   <dbl>
+1  2021                      40
+2  2023                      40
+```
+
+## noncontiguous_row_order
+
+**Non-contiguous input dates: row order does not matter** (PIN)
+
+Rule: The pipeline re-derives calendar structure from the date column, not from row order: a fully shuffled input produces the identical result to the sorted equivalent. Pinned contract (no package-wide validation policy yet); with the dense 40 ppb background all three years pass the gates, and the annual level (40 > 7.1 ppb) is Red in every window.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    set.seed(1)
+    shuffled <- CAAQS_no2(data.frame(date = hours[sample(seq_along(hours))], 
+        no2 = 40), CAAQS_thresholds())
+    sorted <- CAAQS_no2(data.frame(date = hours, no2 = 40), CAAQS_thresholds())
+    identical(as.data.frame(shuffled), as.data.frame(sorted)) && 
+        identical(sorted$management_level_annual, c("Red", "Red", 
+            "Red"))
+```
+
+Expected: TRUE: shuffled and sorted inputs agree row-for-row and level-for-level.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] TRUE
+```
+
+## non_hourly_spacing
+
+**Sub-hourly sampling density is tolerated, not an error** (GDAD)
+
+Rule: Pinned contract (no package-wide validation policy yet): every second hour is accepted as input. The NO2 GDAD Table 5-3 daily criterion then does the work: each calendar day holds only 12 supplied hours (< 18-of-24), so every day is deficient and the result is an empty frame - tolerated input, correctly empty output.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    h2 <- hours[seq(1, length(hours), by = 2)]
+    CAAQS_no2(data.frame(date = h2, no2 = rep(10, length(h2))), 
+        CAAQS_thresholds())
+```
+
+Expected: A zero-row frame: no day reaches the 18-of-24 valid-hours criterion.
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 0 × 2
+# ℹ 2 variables: year <dbl>, perc_98_of_daily_maxima <dbl>
+```
+
+## all_na_year
+
+**An all-NA year drops out gracefully with a warning** (PIN)
+
+Rule: 2022 carries no o3 values at all. The wrapper warns that 2022 is insufficient and reports only 2021/2023 in the o3 frame: the empty-year contract established with the NA-propagation fix (no NA rows emitted, neighbouring years unaffected).
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    o3 <- rep(10, length(hours))
+    o3[hours >= lubridate::ymd_h("2022-01-01 00") & hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    suppressWarnings(CAAQS(dates = hours, o3_1hr_ppb = o3, pm25_1hr_ugm3 = rep(1, 
+        length(hours)))$o3)
+```
+
+Expected: Rows only for 2021/2023, each fourth-highest 10 and 3-year mean NA (two years in the 2021-2023 window).
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 2 × 3
+   year fourth_highest_daily_max_8hr_mean_o3 `3yr_mean`
+  <dbl>                                <dbl>      <dbl>
+1  2021                                   10         NA
+2  2023                                   10         NA
+```
+
+## all_na_column
+
+**An all-NA pollutant column is a clean stop, not a crash** (PIN)
+
+Rule: With the only supplied pollutant entirely NA, no pollutant has three consecutive complete years, so the wrapper stops with its documented message. Pinned as the contract for a fully-missing pollutant feed.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    tryCatch(CAAQS(dates = hours, pm25_1hr_ugm3 = rep(NA_real_, 
+        length(hours))), error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: Cannot calculate CAAQS without at least one pollutant with at least 3 years of complete data.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "Cannot calculate CAAQS without at least one pollutant with at least 3 years of complete data."
 ```
 

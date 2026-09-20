@@ -177,6 +177,19 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   `tests/testthat/helper-CAAQS.R`, shared with the tests), records the
   coverage caveats, and a test asserts the committed document matches a
   fresh regeneration.
+- Extended the fixture catalogue to 23 fixtures and added
+  `tests/testthat/test-CAAQS-inputs.R` for the input-handling behaviour
+  the guidance documents do not legislate (the issue #4 matrix gaps):
+  non-contiguous input dates are accepted and filled, then gated by the
+  GDAD criteria; row order does not matter; sub-hourly sampling density
+  is tolerated (and correctly gates to an empty result); an all-NA year
+  warns and drops out; an all-NA pollutant column stops with the
+  documented message. **Interpretation choice:** no new input-validation
+  stops were added and current tolerant behaviour is pinned as the
+  contract - the issue defers a package-wide validation policy, which
+  remains open for the planned standards-data architecture refactor.
+  Mismatched input lengths surface the underlying recycling error
+  (pinned, not wrapped).
 
 ## AQHI+
 
