@@ -27,6 +27,35 @@ Data flows one way: tables -> engines -> lookups -> output. Engine internals
 must be reused (e.g. `get_aqhi_colours(types = "pm25_1hr")` calls
 `aqhi_plus_map()`), never the exported renderers.
 
+### Development environment: uvr site-library shadow installs
+
+On machines where [uvr](https://github.com/nbafrank/uvr) manages the R
+installation, an old installed copy of this package in `R_HOME/site-library` (e.g.
+`~/.uvr/r-versions/<ver>/site-library/aqstandards`) sits **ahead of `R_LIBS`
+in `.libPaths()`**. `R CMD check` runs its test subprocess under `--vanilla`,
+so no profile or environment override can demote it — the check silently
+tests the stale install against the current test suite, producing failures
+that reference removed code (e.g. `CAAQS(..., min_completeness =)` errors
+after that argument was removed).
+
+If `R CMD check` failures reference functions or arguments that do not exist
+in the working tree, check for a stale install before suspecting the code:
+
+``` r
+installed.packages()["aqstandards", "LibPath"]
+# and remove the copy that predates your changes, e.g.
+#   rm -rf ~/.uvr/r-versions/4.5.3/site-library/aqstandards
+```
+
+To verify branch behavior against an installed tree without that shadow,
+install the built tarball into a private library and run tests with an
+explicit path:
+
+``` r
+.libPaths(c("path/to/private/lib", .libPaths()))
+testthat::test_package("aqstandards")
+```
+
 ## Installation
 
 You can install the development version of aqstandards like so:
