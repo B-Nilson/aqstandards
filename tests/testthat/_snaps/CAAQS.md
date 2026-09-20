@@ -27,8 +27,8 @@
       # A tibble: 4 x 6
          year annual_mean_of_hourly management_level_hourly perc_98_of_daily_maxima
         <dbl>                 <dbl> <chr>                                     <dbl>
-      1  2020                     1 Green                                         1
-      2  2021                     1 Green                                         1
+      1  2020                     1 <NA>                                          1
+      2  2021                     1 <NA>                                          1
       3  2022                     1 Green                                         1
       4  2023                     1 Green                                         1
       # i 2 more variables: `3yr_mean_of_perc_98` <dbl>,
@@ -38,8 +38,8 @@
       # A tibble: 4 x 6
          year annual_mean_of_hourly management_level_hourly perc_99_of_daily_maxima
         <dbl>                 <dbl> <chr>                                     <dbl>
-      1  2020                    30 Green                                        30
-      2  2021                    30 Green                                        30
+      1  2020                    30 <NA>                                         30
+      2  2021                    30 <NA>                                         30
       3  2022                    30 Green                                        30
       4  2023                    30 Green                                        30
       # i 2 more variables: `3yr_mean_of_perc_99` <dbl>,

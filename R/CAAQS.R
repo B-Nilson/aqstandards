@@ -248,12 +248,15 @@ CAAQS_no2 <- function(obs, thresholds) {
     dplyr::mutate(
       `3yr_mean_of_perc_98` = .data$perc_98_of_daily_maxima |>
         handyr::rolling("mean", .width = 3, .direction = "backward"),
+      # The hourly CAAQS metric is the 3-year average of the annual 98th
+      # percentile of daily maximum 1-hour concentrations; the annual CAAQS
+      # metric is the annual mean of 1-hour concentrations.
       management_level_hourly = .data$year |>
         sapply(
           \(y) {
             CAAQS_meets_standard(
               year = y,
-              metric = .data$`annual_mean_of_hourly`[.data$year == y],
+              metric = .data$`3yr_mean_of_perc_98`[.data$year == y],
               thresholds = thresholds$no2$hourly
             )
           }
@@ -263,7 +266,7 @@ CAAQS_no2 <- function(obs, thresholds) {
           \(y) {
             CAAQS_meets_standard(
               year = y,
-              metric = .data$`3yr_mean_of_perc_98`[.data$year == y],
+              metric = .data$`annual_mean_of_hourly`[.data$year == y],
               thresholds = thresholds$no2$annual
             )
           }
@@ -304,12 +307,15 @@ CAAQS_so2 <- function(obs, thresholds) {
     dplyr::mutate(
       `3yr_mean_of_perc_99` = .data$perc_99_of_daily_maxima |>
         handyr::rolling("mean", .width = 3, .direction = "backward"),
+      # The hourly CAAQS metric is the 3-year average of the annual 99th
+      # percentile of daily maximum 1-hour concentrations; the annual CAAQS
+      # metric is the annual mean of 1-hour concentrations.
       management_level_hourly = .data$year |>
         sapply(
           \(y) {
             CAAQS_meets_standard(
               year = y,
-              metric = .data$`annual_mean_of_hourly`[.data$year == y],
+              metric = .data$`3yr_mean_of_perc_99`[.data$year == y],
               thresholds = thresholds$so2$hourly
             )
           }
@@ -319,7 +325,7 @@ CAAQS_so2 <- function(obs, thresholds) {
           \(y) {
             CAAQS_meets_standard(
               year = y,
-              metric = .data$`3yr_mean_of_perc_99`[.data$year == y],
+              metric = .data$`annual_mean_of_hourly`[.data$year == y],
               thresholds = thresholds$so2$annual
             )
           }

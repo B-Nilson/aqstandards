@@ -59,6 +59,68 @@ test_that("O3 daily max uses all 8-hour rolling windows, not non-overlapping blo
   )
 })
 
+test_that("NO2 hourly management level uses the 98th percentile metric, annual uses the annual mean", {
+  # Five years: 5 ppb background with one 100 ppb spike hour on each of nine
+  # days per year. The daily maxima are 100 ppb on the spike days, so the
+  # annual 98th percentile of daily maxima is exactly 100 ppb and the 3-year
+  # average is 100 ppb, while the annual mean of hourly values stays near 5
+  # ppb. The two management levels must therefore differ: Red on the hourly
+  # metric, Yellow on the annual metric. The hourly metric is only defined
+  # once 3 complete years are available.
+  hours <- make_hours("2021-01-01 00", "2025-12-31 23")
+  no2 <- rep(5, length(hours))
+  spike_hours <- unlist(lapply(2021:2025, function(y) {
+    lubridate::ymd_h(paste0(y, "-06-0", 1:9, " 14"))
+  }))
+  no2[hours %in% spike_hours] <- 100
+
+  output <- CAAQS(dates = hours, no2_1hr_ppb = no2)$no2
+
+  expect_gt(min(output$annual_mean_of_hourly), 5)
+  expect_lt(max(output$annual_mean_of_hourly), 5.1)
+  expect_equal(
+    output$`3yr_mean_of_perc_98`,
+    c(NA_real_, NA_real_, 100, 100, 100)
+  )
+  expect_identical(
+    output$management_level_hourly,
+    c(NA, NA, "Red", "Red", "Red")
+  )
+  expect_identical(
+    output$management_level_annual,
+    rep("Yellow", 5)
+  )
+})
+
+test_that("SO2 hourly management level uses the 99th percentile metric, annual uses the annual mean", {
+  # Five years: 1 ppb background with one 80 ppb spike hour on each of five
+  # days per year. The daily maxima are 80 ppb on the spike days, so the
+  # annual 99th percentile of daily maxima is exactly 80 ppb and the 3-year
+  # average is 80 ppb, while the annual mean of hourly values stays near 1
+  # ppb: Red on the hourly metric, Green on the annual metric.
+  hours <- make_hours("2021-01-01 00", "2025-12-31 23")
+  so2 <- rep(1, length(hours))
+  spike_hours <- unlist(lapply(2021:2025, function(y) {
+    lubridate::ymd_h(paste0(y, "-06-0", 1:5, " 03"))
+  }))
+  so2[hours %in% spike_hours] <- 80
+
+  output <- CAAQS(dates = hours, so2_1hr_ppb = so2)$so2
+
+  expect_equal(
+    output$`3yr_mean_of_perc_99`,
+    c(NA_real_, NA_real_, 80, 80, 80)
+  )
+  expect_identical(
+    output$management_level_hourly,
+    c(NA, NA, "Red", "Red", "Red")
+  )
+  expect_identical(
+    output$management_level_annual,
+    rep("Green", 5)
+  )
+})
+
 # TODO: write test
 # test_that("Providing less than 3 years of consecutive data throws an error", {
 #
