@@ -79,9 +79,28 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
     the annual gates are expressed in valid days only. PM2.5 joins the
     same completeness configuration (CAAQS_completeness()) and gate
     logic as the other pollutants.
-  The Table 5-3 exceptions criteria (values that exceed the standard are
-  retained despite missing data) are not implemented: deficient days are
-  dropped, which can only lower a metric value.
+  The daily-row exceptions of Table 5-3 are now implemented: a day that
+  fails its daily criterion is still retained when its value exceeds the
+  standard, per the column-3 criteria "The O3 Dmax 8-hour exceeds the
+  standard", "The NO2 Dmax 1-hour exceeds the standard" and "The SO2 Dmax
+  1-hour exceeds the standard" (with each GDAD's section 5.3 worked
+  example; the comparison uses the Red management level, i.e. the CAAQS
+  in force in the day's year). This is a user-visible behaviour change:
+  deficient days previously dropped are now retained when their value
+  exceeds the standard, which can only raise a metric value. The
+  remaining exceptions criteria are deliberately not implemented: the
+  annual-row exceptions ("The [annual fourth highest / 98th / 99th
+  percentile] exceeds the standard") would re-open ranking for years
+  already failed by their completeness criteria, and the NO2/SO2 annual
+  metric value exception ("at least 50% of the [pollutant] 1-hour are
+  available in each calendar quarter; and the annual average exceeds the
+  standard") rewrites the annual-mean criterion itself; each is
+  conservative to skip, since a year that fails completeness contributes
+  no value rather than one that can only raise the metric. PM2.5's 2012
+  GDAD predates the Table 5-3 format and has no data-completeness
+  exceptions column (its "exceptional events" procedures are an
+  administrative TF/EE designation process, not a data-completeness
+  rule), so none are implemented for PM2.5.
 - The `min_completeness` argument has been removed from `CAAQS()`: every
   pollutant now follows its guidance document's completeness gates, so
   the last heuristic (a uniform annual availability fraction, previously

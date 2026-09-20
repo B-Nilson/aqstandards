@@ -277,28 +277,35 @@ test_that("NO2 annual percentile gate requires 75% of days and 60% of each quart
   )
 })
 
-test_that("deficient days are excluded from NO2 daily maxima per Table 5-3", {
-  # Seven spike days per year (100 ppb) plus one day with a 500 ppb spike in
-  # its only available hour (the other 23 hours missing): with 1 < 18 hours
-  # available the day is deficient and its maximum must not enter the
-  # ranking. The ranking-approach 98th percentile is the 8th highest daily
-  # maximum: with the deficient day excluded no eighth value above the
-  # background exists, so the percentile stays at the 1 ppb background (had
-  # the deficient day been ranked, the 8th highest would be 500 ppb). An
-  # eighth VALID spike day lifts the percentile to 100 ppb, confirming the
-  # metric itself is sound.
+test_that("NO2 deficient days are retained only when they exceed the standard per Table 5-3", {
+  # Seven valid spike days per year (100 ppb) plus one deficient day per
+  # year (1 < 18 available hours). Table 5-3 (NO2 Dmax 1-hour): a deficient
+  # day is retained only under the column-3 exception "The NO2 Dmax 1-hour
+  # exceeds the standard". The ranking-approach 98th percentile is the 8th
+  # highest daily maximum (Appendix B, NDM = 365):
+  #   2021: the deficient day holds a 500 ppb value (> the 60 ppb CAAQS in
+  #     force), so it is retained: the 8th highest is the smallest of the
+  #     eight non-background daily values, i.e. 100 ppb.
+  #   2022: the deficient day holds a 50 ppb value (< the standard), so it
+  #     is excluded: only the seven spikes exceed the background and the
+  #     8th highest is the 1 ppb background. (Retaining it would give 50.)
+  #   2023: no deficient day, so the 8th highest is likewise the background.
   hours <- make_hours("2021-01-01 00", "2023-12-31 23")
   no2 <- rep(1, length(hours))
   spike_hours <- unlist(lapply(2021:2023, function(y) {
     lubridate::ymd_h(paste0(y, "-06-0", 1:7, " 14"))
   }))
   no2[hours %in% spike_hours] <- 100
+  # 2021: deficient day EXCEEDING the standard -> retained.
   no2[hours %in% make_hours("2021-07-01 00", "2021-07-01 23")] <- NA
   no2[hours %in% make_hours("2021-07-01 08", "2021-07-01 08")] <- 500
+  # 2022: deficient day BELOW the standard -> excluded.
+  no2[hours %in% make_hours("2022-07-01 00", "2022-07-01 23")] <- NA
+  no2[hours %in% make_hours("2022-07-01 08", "2022-07-01 08")] <- 50
 
   output <- CAAQS(dates = hours, no2_1hr_ppb = no2)$no2
 
-  expect_identical(output$perc_98_of_daily_maxima, c(1, 1, 1))
+  expect_identical(output$perc_98_of_daily_maxima, c(100, 1, 1))
 
   # Control: an eighth valid spike day in each year raises the 8th highest
   # daily maximum to 100 ppb.
@@ -309,6 +316,56 @@ test_that("deficient days are excluded from NO2 daily maxima per Table 5-3", {
   output <- CAAQS(dates = hours, no2_1hr_ppb = no2)$no2
 
   expect_identical(output$perc_98_of_daily_maxima, c(100, 100, 100))
+})
+
+test_that("O3 deficient days are retained only when they exceed the standard per Table 5-3", {
+  # Section 5.3 example: "there are less than eighteen O3-8-hr in a given
+  # day and the O3 Dmax 8-hour based on the available data is 70 ppb. Since
+  # this O3 Dmax 8-hour exceeds the standard, it will be retained for the
+  # selection of the annual fourth highest even though the completeness
+  # criterion was not satisfied." Table 5-3 (Ozone Dmax 8-hour), column 3:
+  # "The O3 Dmax 8-hour exceeds the standard".
+  #
+  # 2021 background 10 ppb with three valid in-season days at 50, 51 and
+  # 52 ppb and two deficient days (8 plateau hours, the other 16 missing,
+  # so only 3 of the 24 rolling windows are valid):
+  #   2021-05-20 at 70 ppb (> the 60 ppb standard in force): retained.
+  #   2021-06-20 at 55 ppb (< the standard): excluded.
+  # The ordered daily maxima are 70, 52, 51, 50, 10, ..., so the annual
+  # fourth highest is 50 ppb: without the exception the retained day would
+  # be dropped (leaving only three rankable values, i.e. an NA fourth
+  # highest), and had the deficient 55 ppb day also been retained the
+  # fourth highest would be 51 ppb.
+  hours <- make_hours("2021-01-01 00", "2021-12-31 23")
+  o3 <- rep(10, length(hours))
+  for (spike in list(c("2021-05-10", "50"), c("2021-06-10", "51"), c("2021-08-10", "52"))) {
+    o3[hours %in% make_hours(paste0(spike[1], " 09"), paste0(spike[1], " 16"))] <-
+      as.numeric(spike[2])
+  }
+  for (day in c("2021-05-20", "2021-06-20")) {
+    o3[hours %in% make_hours(paste0(day, " 00"), paste0(day, " 08"))] <- NA
+    o3[hours %in% make_hours(paste0(day, " 17"), paste0(day, " 23"))] <- NA
+  }
+  o3[hours %in% make_hours("2021-05-20 09", "2021-05-20 16")] <- 70
+  o3[hours %in% make_hours("2021-06-20 09", "2021-06-20 16")] <- 55
+
+  output <- CAAQS_o3(data.frame(date = hours, o3 = o3), CAAQS_thresholds())
+
+  expect_identical(output$fourth_highest_daily_max_8hr_mean_o3, 50)
+})
+
+test_that("CAAQS_red_threshold returns the CAAQS in force for a year", {
+  th <- CAAQS_thresholds()
+  # O3 8-hour: 62 ppb in force from 2020, 60 ppb from 2025.
+  expect_equal(CAAQS_red_threshold(2024, th$o3$`8hr`), 62)
+  expect_equal(CAAQS_red_threshold(2025, th$o3$`8hr`), 60)
+  # Vectorized over year, as dplyr::filter() passes whole columns; NA where
+  # no standard is yet in force.
+  expect_equal(
+    CAAQS_red_threshold(c(2019, 2021, 2026), th$no2$hourly),
+    c(NA_real_, 60, 42)
+  )
+  expect_equal(CAAQS_red_threshold(c(2018, 2020), th$pm25$daily), c(28, 27))
 })
 
 test_that("O3 daily maxima require 18 of 24 valid rolling windows per Table 5-3", {

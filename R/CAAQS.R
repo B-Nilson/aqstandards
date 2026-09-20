@@ -145,16 +145,32 @@ CAAQS <- function(
 ## quoting the Data completeness criteria (column 2) of Table 5-3 of the CCME
 ## Guidance Document on Achievement Determination for each pollutant (Ozone
 ## 2021; Nitrogen Dioxide 2020; Sulphur Dioxide 2020; Fine Particulate Matter
-## and Ozone 2012, PN 1483, sections 4.1.4 and 4.2.4 for PM2.5). The exceptions in
-## column 3 ("the [metric] exceeds the standard") are not implemented here;
-## deficient values are dropped rather than retained when they exceed.
+## and Ozone 2012, PN 1483, sections 4.1.4 and 4.2.4 for PM2.5). Column 3 of
+## the same tables lists the exceptions to those criteria; of these, the
+## daily-row exceptions ("The [O3 Dmax 8-hour / NO2 Dmax 1-hour / SO2 Dmax
+## 1-hour] exceeds the standard") are implemented in CAAQS_o3/no2/so2: a
+## deficient day is retained when its value exceeds the standard. The
+## remaining exceptions are deliberately not implemented (see the per-
+## pollutant comments below and NEWS.md): a faithful implementation would
+## require re-processing data that the pipelines have already dropped, and
+## each is conservative in that it can only retain values that raise, never
+## lower, a metric. PM2.5's 2012 GDAD predates the Table 5-3 format and has
+## no data-completeness exceptions column at all (its "exceptional events"
+## procedures in section 7 are an administrative TF/EE designation process,
+## not a data-completeness rule); none are implemented for PM2.5.
 CAAQS_completeness <- function() {
   list(
     # Ozone GDAD (2021), Table 5-3 (Ozone Dmax 8-hour): "O3 Dmax 8-hour are
     # available for at least 75% of the days in the period April 1 to
     # September 30." The annual fourth-highest ranking is restricted to that
     # season because it is "the time of year where the annual fourth highest
-    # will likely be recorded in most of Canada" (GDAD section 5.3).
+    # will likely be recorded in most of Canada" (GDAD section 5.3). The
+    # annual row's column-3 exception ("The annual fourth highest exceeds
+    # the standard") is not implemented: it would re-open ranking for years
+    # already failed by the season days criterion, and (like the section
+    # 5.3 off-season rule) it is conservative to skip -- a year that fails
+    # completeness contributes no value rather than one that can only raise
+    # the metric.
     o3 = list(
       min_hours_of_day = 18L,
       season = c(start = "04-01", end = "09-30"),
@@ -174,6 +190,13 @@ CAAQS_completeness <- function() {
     #   Annual metric value: "1. at least 75% of the NO2 1-hour are available
     #     in the year; and 2. at least 60% of the NO2 1-hour are available in
     #     each calendar quarter."
+    # Exceptions: the percentile row's exception ("The 98th percentile based
+    # on the available NO2 Dmax 1-hour exceeds the standard") and the annual
+    # metric value row's exception ("1. at least 50% of the NO2 1-hour are
+    # available in each calendar quarter; and 2. the annual average exceeds
+    # the standard") are not implemented: they would require re-processing
+    # data already dropped by the daily/annual gates, and are conservative
+    # to skip (see the header comment above and NEWS.md).
     # Calendar quarters (GDAD footnote): Q1 January 1 - March 31; Q2 April 1
     # - June 30; Q3 July 1 - September 30; Q4 October 1 - December 31.
     no2 = list(
@@ -191,7 +214,11 @@ CAAQS_completeness <- function() {
     # available in the day"; annual 99th percentile "75% of the days in a
     # year and 60% of the days in each calendar quarter"; annual metric
     # value "75% of the SO2 1-hour ... in the year and 60% ... in each
-    # calendar quarter").
+    # calendar quarter"). Exceptions: as for NO2, the daily-row exception
+    # ("The SO2 Dmax 1-hour exceeds the standard") is implemented in
+    # CAAQS_so2(), while the percentile and annual metric value exceptions
+    # are not implemented (conservative; see the NO2 comment and the header
+    # comment above).
     so2 = list(
       min_hours_of_day = 18L,
       season = NULL,
@@ -462,24 +489,37 @@ CAAQS_o3 <- function(obs, thresholds) {
     ) |>
     # 8-hour rolling means -> daily maximum over the 24 windows (J = 1 to 24)
     # ending in the day. Table 5-3 (Ozone Dmax 8-hour): "At least 18 (75%) of
-    # the 24 O3-8-hr are available in the day", so days with fewer than 18
-    # valid windows contribute no daily maximum to the annual ranking.
+    # the 24 O3-8-hr are available in the day", with the column-3 exception
+    # "The O3 Dmax 8-hour exceeds the standard": a deficient day is excluded
+    # unless its O3 Dmax 8-hour exceeds the standard (GDAD section 5.3:
+    # "Since this O3 Dmax 8-hour exceeds the standard, it will be retained
+    # for the selection of the annual fourth highest even though the
+    # completeness criterion was not satisfied").
     dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
     dplyr::summarise(
       daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE),
       valid_windows = sum(!is.na(.data$`8hr_mean_o3`)),
       .groups = "drop"
     ) |>
-    dplyr::filter(.data$valid_windows >= 18) |>
+    dplyr::filter(
+      .data$valid_windows >= CAAQS_completeness()$o3$min_hours_of_day |
+        .data$daily_max_8hr_mean_o3 >
+          CAAQS_red_threshold(lubridate::year(.data$date), thresholds$o3$`8hr`)
+    ) |>
+    # A table with no rankable rows must stay empty rather than emitting an
+    # all-NA annual fourth highest (handyr::max(na.rm = TRUE) on an empty
+    # input would warn; the summarise above keeps one all-NA row).
+    dplyr::filter(dplyr::n() > 0) |>
     # Daily maxima are ranked for the annual fourth-highest only within the
     # ozone season. Table 5-3 (Annual fourth highest O3 Dmax 8-hour): "O3
     # Dmax 8-hour are available for at least 75% of the days in the period
     # April 1 to September 30"; section 5.3 restricts the completeness
     # requirement to that period because it is "the time of year where the
-    # annual fourth highest will likely be recorded in most of Canada"
-    # (values outside the season would still count when the season criterion
-    # is met or the value exceeds the standard -- an exceptions rule not
-    # implemented here; see CAAQS_completeness()).
+    # annual fourth highest will likely be recorded in most of Canada".
+    # The annual row's column-3 exception ("The annual fourth highest
+    # exceeds the standard") would also rank values when the season days
+    # criterion fails; see CAAQS_completeness() for the reason that is not
+    # implemented here.
     dplyr::filter(
       !(lubridate::month(.data$date) %in% c(1:3, 10:12))
     ) |>
@@ -517,8 +557,10 @@ CAAQS_no2 <- function(obs, thresholds) {
     dplyr::mutate(annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE)) |>
     # hourly mean -> daily maxima, keeping only days meeting the daily
     # completeness criterion. Table 5-3 (NO2 Dmax 1-hour): "At least 18 of
-    # the 24 (75%) NO2 1-hour are available in the day"; those daily maxima
-    # feed both the annual 98th percentile and (via the metric value
+    # the 24 (75%) NO2 1-hour are available in the day", with the column-3
+    # exception "The NO2 Dmax 1-hour exceeds the standard": a deficient day
+    # is excluded unless its daily maximum exceeds the standard. Those daily
+    # maxima feed both the annual 98th percentile and (via the metric value
     # criteria) the annual-mean metric.
     dplyr::group_by(
       date = .data$date |> lubridate::floor_date("1 days"),
@@ -529,7 +571,11 @@ CAAQS_no2 <- function(obs, thresholds) {
       daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE),
       daily_avail_hours = sum(!is.na(.data$no2))
     ) |>
-    dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$no2$min_hours_of_day) |>
+    dplyr::filter(
+      .data$daily_avail_hours >= CAAQS_completeness()$no2$min_hours_of_day |
+        .data$daily_max_hourly_no2 >
+          CAAQS_red_threshold(lubridate::year(.data$date), thresholds$no2$hourly)
+    ) |>
     # daily maxima -> annual 98th percentile. Table 5-3 (Annual 98th
     # percentile of the NO2 Dmax 1-hour): the NO2 Dmax 1-hour must "be
     # available for at least: 1. 75% of the days in a year; and 2. 60% of
@@ -590,7 +636,9 @@ CAAQS_so2 <- function(obs, thresholds) {
     dplyr::mutate(annual_mean_of_hourly = .data$so2 |> mean(na.rm = TRUE)) |>
     # hourly mean -> daily maxima, keeping only days meeting the daily
     # completeness criterion. Table 5-3 (SO2 Dmax 1-hour): "At least 18 of
-    # the 24 (75%) SO2 1-hour are available in the day".
+    # the 24 (75%) SO2 1-hour are available in the day", with the column-3
+    # exception "The SO2 Dmax 1-hour exceeds the standard": a deficient day
+    # is excluded unless its daily maximum exceeds the standard.
     dplyr::group_by(
       date = date |> lubridate::floor_date("1 days"),
       .data$annual_mean_of_hourly
@@ -600,7 +648,11 @@ CAAQS_so2 <- function(obs, thresholds) {
       daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE),
       daily_avail_hours = sum(!is.na(.data$so2))
     ) |>
-    dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$so2$min_hours_of_day) |>
+    dplyr::filter(
+      .data$daily_avail_hours >= CAAQS_completeness()$so2$min_hours_of_day |
+        .data$daily_max_hourly_so2 >
+          CAAQS_red_threshold(lubridate::year(.data$date), thresholds$so2$hourly)
+    ) |>
     # daily maxima -> annual 99th percentile. Table 5-3 (Annual 99th
     # percentile of the SO2 Dmax 1-hour): the SO2 Dmax 1-hour must "be
     # available for at least: 1. 75% of the days in a year; and 2. 60% of
@@ -672,6 +724,29 @@ CAAQS_rank_percentile <- function(x, p) {
   }
   k <- n - floor(n * p + 1e-9)
   sort(x, decreasing = TRUE)[k]
+}
+
+## The Red management level of the CAAQS in force in `year` for the
+## pollutant/averaging period addressed by `thresholds` (one of the lists
+## in CAAQS_thresholds(), e.g. thresholds$no2$hourly). The Red level is the
+## CAAQS itself (CAAQS_thresholds()), so this is the "exceeds the standard"
+## value used by the data-completeness exceptions criteria of the GDADs'
+## Table 5-3 ("The NO2 Dmax 1-hour exceeds the standard" and similar).
+## Returns NA when no CAAQS for that averaging period is yet in force in
+## `year`, mirroring CAAQS_meets_standard()'s handling of such years.
+## Vectorized over `year` (dplyr::filter() passes whole columns).
+CAAQS_red_threshold <- function(year, thresholds) {
+  vapply(
+    year,
+    function(y) {
+      mgmt_levels <- thresholds[as.numeric(names(thresholds)) <= y] |> dplyr::last()
+      if (length(mgmt_levels) == 0) {
+        return(NA_real_)
+      }
+      unname(mgmt_levels["Red"])
+    },
+    numeric(1)
+  )
 }
 
 CAAQS_meets_standard <- function(year, metric, thresholds) {
