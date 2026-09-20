@@ -32,9 +32,14 @@
 #' 4.1.4 and 4.2.4 of the PM2.5 GDAD; see `CAAQS_completeness()`): annual
 #' metric values are reported only for years meeting the applicable daily,
 #' annual and calendar-quarter criteria, and hours-per-year requirements are
-#' derived from the calendar rather than hardcoded leap-year arithmetic.
-#' Hourly datetimes are assumed to label the start of the averaging hour and
-#' to be in local standard time.
+#' derived from the calendar rather than hardcoded leap-year arithmetic. The
+#' GDADs' exceptions to those criteria are applied: a deficient day or a
+#' gated-out year is still retained when its value exceeds the standard (a
+#' gated-out year's annual metric is computed from all available data), and
+#' the NO2/SO2 annual-mean metric accepts the relaxed 50%-per-calendar-
+#' quarter criterion of its Table 5-3 annual row when the annual average
+#' exceeds the standard. Hourly datetimes are assumed to label the start of
+#' the averaging hour and to be in local standard time.
 #'
 #' @references
 #' \itemize{
@@ -102,7 +107,11 @@ CAAQS <- function(
     ))
   }
 
-  # Drop data for years lacking enough data
+  # Keep data for years lacking enough data: whether a gated-out year's
+  # data contribute a metric is decided inside CAAQS_<pollutant>() so that
+  # the GDADs' annual exceptions criteria ("The [annual fourth highest /
+  # 98th / 99th percentile based on the available data] exceeds the
+  # standard") can retain such a year. Warn for transparency:
   pols <- names(has_enough_obs)[-1]
   for (pol in pols) {
     insufficient_years <- has_enough_obs$year[unlist(!has_enough_obs[pol])]
@@ -114,8 +123,6 @@ CAAQS <- function(
         paste(insufficient_years, collapse = ", "),
         "see the CCME guidance documents' data completeness criteria"
       ))
-      is_insufficient_year <- obs$year %in% insufficient_years
-      obs[is_insufficient_year, pol] <- NA
     }
   }
 
@@ -145,19 +152,38 @@ CAAQS <- function(
 ## quoting the Data completeness criteria (column 2) of Table 5-3 of the CCME
 ## Guidance Document on Achievement Determination for each pollutant (Ozone
 ## 2021; Nitrogen Dioxide 2020; Sulphur Dioxide 2020; Fine Particulate Matter
-## and Ozone 2012, PN 1483, sections 4.1.4 and 4.2.4 for PM2.5). Column 3 of
-## the same tables lists the exceptions to those criteria; of these, the
-## daily-row exceptions ("The [O3 Dmax 8-hour / NO2 Dmax 1-hour / SO2 Dmax
-## 1-hour] exceeds the standard") are implemented in CAAQS_o3/no2/so2: a
-## deficient day is retained when its value exceeds the standard. The
-## remaining exceptions are deliberately not implemented (see the per-
-## pollutant comments below and NEWS.md): a faithful implementation would
-## require re-processing data that the pipelines have already dropped, and
-## each is conservative in that it can only retain values that raise, never
-## lower, a metric. PM2.5's 2012 GDAD predates the Table 5-3 format and has
-## no data-completeness exceptions column at all (its "exceptional events"
-## procedures in section 7 are an administrative TF/EE designation process,
-## not a data-completeness rule); none are implemented for PM2.5.
+## and Ozone 2012, PN 1483, sections 4.1.4 and 4.2.4 for PM2.5).
+##
+## Column 3 of the same tables lists the exceptions to those criteria; this
+## configuration is also the single owner of which of those exceptions apply
+## per pollutant, alongside the criteria they qualify:
+##
+##   * Daily-row exception ("The [O3 Dmax 8-hour / NO2 Dmax 1-hour / SO2 Dmax
+##     1-hour] exceeds the standard"): a deficient day is retained when its
+##     value exceeds the standard. Implemented in CAAQS_o3/no2/so2.
+##
+##   * Annual percentile-row exception (O3: "The annual fourth highest
+##     exceeds the standard"; NO2: "The 98th percentile based on the
+##     available NO2 Dmax 1-hour exceeds the standard"; SO2: "The 99th
+##     percentile based on the available SO2 Dmax 1-hour exceeds the
+##     standard"): a year failing the annual days/quarters criteria still
+##     contributes its percentile-type metric when that metric, computed on
+##     all available data of the year, exceeds the standard. Implemented in
+##     the pipelines via `annual_metric_exception`.
+##
+##   * NO2/SO2 annual-metric-value exception ("1. at least 50% of the [NO2 /
+##     SO2] 1-hour are available in each calendar quarter; and 2. the annual
+##     average exceeds the standard"): the annual-mean metric of a year
+##     failing the 75%-of-hours / 60%-per-quarter criteria is still computed
+##     under the relaxed 50%-per-calendar-quarter criterion when the annual
+##     average exceeds the standard. Implemented in the pipelines via
+##     `annual_mean_exception`.
+##
+##   * PM2.5's 2012 GDAD predates the Table 5-3 format and has no
+##     data-completeness exceptions column at all (its "exceptional events"
+##     procedures in section 7 are an administrative TF/EE designation
+##     process, not a data-completeness rule); none are implemented for
+##     PM2.5.
 CAAQS_completeness <- function() {
   list(
     # Ozone GDAD (2021), Table 5-3 (Ozone Dmax 8-hour): "O3 Dmax 8-hour are
@@ -166,11 +192,9 @@ CAAQS_completeness <- function() {
     # season because it is "the time of year where the annual fourth highest
     # will likely be recorded in most of Canada" (GDAD section 5.3). The
     # annual row's column-3 exception ("The annual fourth highest exceeds
-    # the standard") is not implemented: it would re-open ranking for years
-    # already failed by the season days criterion, and (like the section
-    # 5.3 off-season rule) it is conservative to skip -- a year that fails
-    # completeness contributes no value rather than one that can only raise
-    # the metric.
+    # the standard") retains a year that fails the season days criterion
+    # when its annual fourth highest, computed on all available data of the
+    # year, exceeds the standard (annual_metric_exception below).
     o3 = list(
       min_hours_of_day = 18L,
       season = c(start = "04-01", end = "09-30"),
@@ -179,7 +203,8 @@ CAAQS_completeness <- function() {
       min_days_fraction_quarters = NULL,
       min_hours_fraction_year = NULL,
       min_hours_fraction_quarters = NULL,
-      min_days_of_quarters = NULL
+      min_days_of_quarters = NULL,
+      annual_metric_exception = TRUE
     ),
     # Nitrogen Dioxide GDAD (2020), Table 5-3:
     #   NO2 Dmax 1-hour: "At least 18 of the 24 (75%) NO2 1-hour are
@@ -191,12 +216,15 @@ CAAQS_completeness <- function() {
     #     in the year; and 2. at least 60% of the NO2 1-hour are available in
     #     each calendar quarter."
     # Exceptions: the percentile row's exception ("The 98th percentile based
-    # on the available NO2 Dmax 1-hour exceeds the standard") and the annual
-    # metric value row's exception ("1. at least 50% of the NO2 1-hour are
-    # available in each calendar quarter; and 2. the annual average exceeds
-    # the standard") are not implemented: they would require re-processing
-    # data already dropped by the daily/annual gates, and are conservative
-    # to skip (see the header comment above and NEWS.md).
+    # on the available NO2 Dmax 1-hour exceeds the standard") retains a year
+    # failing the days/quarters criteria when its 98th percentile, computed
+    # on all available data of the year, exceeds the standard
+    # (annual_metric_exception below). The annual metric value row's
+    # exception ("1. at least 50% of the NO2 1-hour are available in each
+    # calendar quarter; and 2. the annual average exceeds the standard")
+    # computes the annual-mean metric under the relaxed 50%-per-quarter
+    # criterion when the annual average exceeds the standard
+    # (annual_mean_exception below).
     # Calendar quarters (GDAD footnote): Q1 January 1 - March 31; Q2 April 1
     # - June 30; Q3 July 1 - September 30; Q4 October 1 - December 31.
     no2 = list(
@@ -207,7 +235,9 @@ CAAQS_completeness <- function() {
       min_days_fraction_quarters = 0.6,
       min_hours_fraction_year = 0.75,
       min_hours_fraction_quarters = 0.6,
-      min_days_of_quarters = NULL
+      min_days_of_quarters = NULL,
+      annual_metric_exception = TRUE,
+      annual_mean_exception = TRUE
     ),
     # Sulphur Dioxide GDAD (2020), Table 5-3: identical structure to NO2 with
     # SO2 in place of NO2 (SO2 Dmax 1-hour "At least 18 of the 24 (75%) ...
@@ -216,9 +246,11 @@ CAAQS_completeness <- function() {
     # value "75% of the SO2 1-hour ... in the year and 60% ... in each
     # calendar quarter"). Exceptions: as for NO2, the daily-row exception
     # ("The SO2 Dmax 1-hour exceeds the standard") is implemented in
-    # CAAQS_so2(), while the percentile and annual metric value exceptions
-    # are not implemented (conservative; see the NO2 comment and the header
-    # comment above).
+    # CAAQS_so2(), the percentile-row exception ("The 99th percentile based
+    # on the available SO2 Dmax 1-hour exceeds the standard") via
+    # annual_metric_exception, and the annual metric value row's exception
+    # ("at least 50% ... in each calendar quarter; and 2. the annual average
+    # exceeds the standard") via annual_mean_exception.
     so2 = list(
       min_hours_of_day = 18L,
       season = NULL,
@@ -227,7 +259,9 @@ CAAQS_completeness <- function() {
       min_days_fraction_quarters = 0.6,
       min_hours_fraction_year = 0.75,
       min_hours_fraction_quarters = 0.6,
-      min_days_of_quarters = NULL
+      min_days_of_quarters = NULL,
+      annual_metric_exception = TRUE,
+      annual_mean_exception = TRUE
     ),
     # PM2.5 Guidance Document on Achievement Determination (PN 1483, "Fine
     # Particulate Matter and Ozone", 2012), sections 4.1.1, 4.1.4 and 4.2.4:
@@ -237,7 +271,8 @@ CAAQS_completeness <- function() {
     # 24hr-PM2.5 in the year" and "at least 60% valid daily-24hr-PM2.5 in
     # each calendar quarter" (quarters Q1 January 1 - March 31 through Q4
     # October 1 - December 31). Unlike NO2/SO2 there is no hours-per-year
-    # criterion: the annual gates are expressed in valid days only.
+    # criterion: the annual gates are expressed in valid days only, and the
+    # 2012 document has no exceptions column (see the header comment above).
     pm25 = list(
       min_hours_of_day = 18L,
       season = NULL,
@@ -246,9 +281,165 @@ CAAQS_completeness <- function() {
       min_days_fraction_quarters = 0.6,
       min_hours_fraction_year = NULL,
       min_hours_fraction_quarters = NULL,
-      min_days_of_quarters = NULL
+      min_days_of_quarters = NULL,
+      annual_metric_exception = FALSE,
+      annual_mean_exception = FALSE
     )
   )
+}
+
+## Calendar periods touched by `obs` (columns `date` and `year`), one row
+## per calendar year: `days_in_year`, `hours_in_year`, `quarter` (Q1 to Q4,
+## the GDADs' calendar quarters, Q1 January 1 - March 31 through Q4 October
+## 1 - December 31), `days_in_quarter` and `hours_in_quarter`. All counts
+## are derived from the calendar via lubridate's leap-year rule (which
+## handles century years correctly), replacing the previously hardcoded
+## `year %% 4 == 0` leap check.
+CAAQS_cal_year_periods <- function(obs) {
+  yrs <- sort(unique(obs$year))
+  data.frame(year = rep(yrs, each = 4), quarter = paste0("Q", 1:4)) |>
+    dplyr::mutate(
+      days_in_year = 365 +
+        as.integer(lubridate::leap_year(.data$year)),
+      hours_in_year = 24 * .data$days_in_year,
+      days_in_quarter = c(90, 91, 92, 92) +
+        as.integer(.data$quarter == "Q1" & lubridate::leap_year(.data$year)),
+      hours_in_quarter = 24 * .data$days_in_quarter
+    )
+}
+
+## Per-year completeness details for the single pollutant configured by
+## `cfg` (one entry of CAAQS_completeness(); see there for the quoted GDAD
+## criteria and exceptions). Returns a one-row tibble:
+##
+##   * `days_ok` — the year's days criteria for the percentile-type metrics
+##     hold: the year (or the configured season, for O3) holds at least
+##     `min_days_fraction` of its calendar days with an available daily
+##     value, and each calendar quarter at least
+##     `min_days_fraction_quarters` of its days.
+##   * `hours_ok` — the year's hourly criteria for the annual-mean metrics
+##     hold: at least `min_hours_fraction_year` of the year's hours and
+##     `min_hours_fraction_quarters` of each quarter's hours are available.
+##   * `relaxed_quarters_ok` — every calendar quarter holds the GDADs'
+##     relaxed 50%-of-hours criterion (the NO2/SO2 annual metric value
+##     row's exception, "at least 50% ... in each calendar quarter"); the
+##     complement of `hours_ok` for the quarters.
+##
+## A day has an available daily value when it meets the daily criterion of
+## Table 5-3 (e.g. "At least 18 of the 24 (75%) NO2 1-hour are available in
+## the day"); with no daily criterion any observed hour makes the day
+## available. Deficient days are excluded from the metric pipelines (see
+## CAAQS_o3/no2/so2) but do not by themselves make the year incomplete: the
+## annual criteria are expressed in available days.
+CAAQS_gate_details <- function(day_hours, cfg, cal) {
+  valid_day <- if (!is.null(cfg$min_hours_of_day)) {
+    day_hours$hours >= cfg$min_hours_of_day
+  } else {
+    day_hours$hours > 0
+  }
+  # Scope of the days gate: the season when one is configured (Ozone GDAD
+  # Table 5-3: "O3 Dmax 8-hour are available for at least 75% of the days
+  # in the period April 1 to September 30"), otherwise the whole year
+  # (NO2/SO2 GDADs Table 5-3: "available for at least 75% of the days in a
+  # year").
+  scope <- valid_day
+  if (!is.null(cfg$season)) {
+    in_season <-
+      day_hours$monthday >= cfg$season["start"] &
+        day_hours$monthday <= cfg$season["end"]
+    scope <- scope & in_season
+  }
+
+  # The GDAD denominators are the calendar days of the year (or of the
+  # fixed April 1 - September 30 season, 183 days whether or not the year
+  # is a leap year). cal has one row per calendar quarter, so its year
+  # columns repeat the year's value 4 times.
+  days_in_scope <- if (!is.null(cfg$season)) 183 else cal$days_in_year[1]
+  days_ok <- TRUE
+  if (!is.null(cfg$min_days_fraction)) {
+    days_ok <- days_ok && sum(scope) >= days_in_scope * cfg$min_days_fraction
+  }
+  if (!is.null(cfg$min_days_of_year)) {
+    days_ok <- days_ok && sum(valid_day) >= cfg$min_days_of_year
+  }
+
+  q <- cal |>
+    dplyr::left_join(
+      day_hours |>
+        dplyr::mutate(
+          quarter = paste0("Q", lubridate::quarter(.data$date, fiscal_start = 1)),
+          valid = valid_day
+        ) |>
+        dplyr::group_by(.data$quarter) |>
+        dplyr::summarise(
+          .groups = "drop",
+          days = sum(.data$valid),
+          hours_avail = sum(.data$hours)
+        ),
+      by = "quarter"
+    )
+  if (!is.null(cfg$min_days_fraction_quarters)) {
+    days_ok <- days_ok &&
+      all(q$days >= q$days_in_quarter * cfg$min_days_fraction_quarters)
+  }
+  if (!is.null(cfg$min_days_of_quarters)) {
+    days_ok <- days_ok && all(q$days >= cfg$min_days_of_quarters)
+  }
+
+  hours_ok <- TRUE
+  if (!is.null(cfg$min_hours_fraction_year)) {
+    # Annual hourly gate, e.g. "at least 75% of the NO2 1-hour are
+    # available in the year" (NO2 and SO2 GDADs Table 5-3, annual metric
+    # value criteria).
+    hours_ok <- hours_ok &&
+      sum(day_hours$hours) >= cfg$min_hours_fraction_year * cal$hours_in_year[1]
+  }
+  if (!is.null(cfg$min_hours_fraction_quarters)) {
+    # Calendar-quarter hourly gate: "60% of the NO2 1-hour are available in
+    # each calendar quarter" (NO2 and SO2 GDADs Table 5-3, annual metric
+    # value criteria).
+    hours_ok <- hours_ok &&
+      all(q$hours_avail >= q$hours_in_quarter * cfg$min_hours_fraction_quarters)
+  }
+
+  tibble::tibble(
+    days_ok = isTRUE(days_ok),
+    hours_ok = isTRUE(hours_ok),
+    relaxed_quarters_ok = isTRUE(all(q$hours_avail >= q$hours_in_quarter * 0.5))
+  )
+}
+
+## Evaluate the year-level completeness criteria of `cfg` (one
+## CAAQS_completeness() entry) for the hourly observations of a single
+## pollutant (`pol`, a column of `obs_grouped`, grouped by year). Returns
+## the CAAQS_gate_details() tibble per year (days_ok, hours_ok and
+## relaxed_quarters_ok), the per-gate inputs the metric pipelines need for
+## the GDADs' annual-row exceptions criteria.
+CAAQS_year_gate_details <- function(obs_grouped, cfg, pol) {
+  obs_grouped |>
+    dplyr::group_modify(function(.x, .y) {
+      # Extract the pollutant column with base R before any data masking:
+      # .data[[pol]] pronoun subsetting is unreliable inside group_modify()'
+      # s nested masks (it can silently read as all-NA for some groups).
+      cal <- .x |>
+        dplyr::distinct(
+          date = .data$date |> lubridate::floor_date("days"),
+          year = lubridate::year(.data$date)
+        ) |>
+        CAAQS_cal_year_periods()
+      day_hours <- tibble::tibble(
+        date = lubridate::floor_date(.x$date, "days"),
+        hours = as.integer(!is.na(.x[[pol]]))
+      ) |>
+        dplyr::group_by(.data$date) |>
+        dplyr::summarise(hours = sum(.data$hours), .groups = "drop") |>
+        dplyr::mutate(
+          monthday = sprintf(
+            "%02d-%02d", lubridate::month(.data$date), lubridate::day(.data$date)
+          )
+        )
+      CAAQS_gate_details(day_hours, cfg, cal)
+    })
 }
 
 ## Assess annual data completeness for each pollutant in `obs` (columns
@@ -266,25 +457,7 @@ CAAQS_has_enough_obs <- function(obs, completeness) {
   pols <- pols[pols %in% names(obs)]
   obs <- obs |>
     dplyr::mutate(date = .data$date |> lubridate::floor_date("days"))
-
-  # Hours per year and per calendar quarter are derived from the calendar
-  # via lubridate's leap-year rule (which handles century years correctly),
-  # replacing the previously hardcoded `year %% 4 == 0` leap check.
-  yrs <- sort(unique(obs$year))
-  stats_year <- data.frame(year = yrs) |>
-    dplyr::mutate(
-      hours_in_year = 24 * (365 + as.integer(lubridate::leap_year(.data$year)))
-    )
-  stats_quarter <- data.frame(
-    year = rep(yrs, each = 4),
-    quarter = paste0("Q", 1:4)
-  ) |>
-    dplyr::mutate(
-      hours_in_quarter = 24 * (
-        c(90, 91, 92, 92) +
-          as.integer(.data$quarter == "Q1" & lubridate::leap_year(.data$year))
-      )
-    )
+  cal <- CAAQS_cal_year_periods(obs)
   # One row per year x pollutant x day: distinct hours with a non-NA
   # observation, used by both the daily and the annual gates.
   avail <- obs |>
@@ -297,94 +470,21 @@ CAAQS_has_enough_obs <- function(obs, completeness) {
         "-", sprintf("%02d", lubridate::day(.data$date))
       )
     )
-  out <- avail |>
+  avail |>
     dplyr::group_by(.data$year, .data$pol) |>
     dplyr::group_modify(~ {
       cfg <- completeness[[.y$pol]]
       if (is.null(cfg)) {
         return(tibble::tibble(ok = FALSE))
       }
-      ok <- TRUE
-      # A day contributes an available daily maximum when it meets the
-      # daily criterion of Table 5-3 (e.g. "At least 18 of the 24 (75%)
-      # NO2 1-hour are available in the day"); with no daily criterion any
-      # observed hour makes the day available. Deficient days are excluded
-      # from the metric pipelines (see CAAQS_o3/no2/so2) but do not by
-      # themselves make the year incomplete: the annual criteria below are
-      # expressed in available days.
-      valid_day <- if (!is.null(cfg$min_hours_of_day)) {
-        .x$hours >= cfg$min_hours_of_day
-      } else {
-        .x$hours > 0
-      }
-      # Scope of the days gate: the season when one is configured (Ozone
-      # GDAD Table 5-3: "O3 Dmax 8-hour are available for at least 75% of
-      # the days in the period April 1 to September 30"), otherwise the
-      # whole year (NO2/SO2 GDADs Table 5-3: "available for at least 75% of
-      # the days in a year").
-      scope <- valid_day
-      if (!is.null(cfg$season)) {
-        in_season <-
-          .x$monthday >= cfg$season["start"] & .x$monthday <= cfg$season["end"]
-        scope <- valid_day & in_season
-      }
-      if (!is.null(cfg$min_days_fraction)) {
-        # The GDAD denominators are the calendar days of the year (or of
-        # the fixed April 1 - September 30 season, 183 days whether or not
-        # the year is a leap year).
-        days_in_scope <- if (!is.null(cfg$season)) {
-          183
-        } else {
-          365 + as.integer(lubridate::leap_year(.y$year))
-        }
-        ok <- ok && sum(scope) >= days_in_scope * cfg$min_days_fraction
-      }
-      if (!is.null(cfg$min_days_of_year)) {
-        ok <- ok && sum(valid_day) >= cfg$min_days_of_year
-      }
-      # Annual hourly gate, e.g. "at least 75% of the NO2 1-hour are
-      # available in the year" (NO2 and SO2 GDADs Table 5-3, annual metric
-      # value criteria).
-      if (!is.null(cfg$min_hours_fraction_year)) {
-        hours_in_year <- stats_year$hours_in_year[stats_year$year == .y$year]
-        ok <- ok && sum(.x$hours) >= cfg$min_hours_fraction_year * hours_in_year
-      }
-      # Calendar-quarter gates: "60% of the days in each calendar quarter"
-      # (percentile criteria) and "60% of the NO2 1-hour are available in
-      # each calendar quarter" (annual metric value criteria), with Q1
-      # January 1 - March 31 through Q4 October 1 - December 31 (GDADs
-      # Table 5-3 footnote).
-      if (!is.null(cfg$min_days_fraction_quarters) ||
-            !is.null(cfg$min_hours_fraction_quarters) ||
-            !is.null(cfg$min_days_of_quarters)) {
-        qd <- .x |>
-          dplyr::mutate(
-            quarter = paste0("Q", lubridate::quarter(.data$date, fiscal_start = 1)),
-            valid = valid_day
-          ) |>
-          dplyr::group_by(.data$quarter) |>
-          dplyr::summarise(
-            .groups = "drop",
-            days = sum(.data$valid),
-            hours_avail = sum(.data$hours)
-          )
-        q <- dplyr::left_join(
-          stats_quarter[stats_quarter$year == .y$year, ],
-          qd,
-          by = "quarter"
-        )
-        if (!is.null(cfg$min_days_fraction_quarters)) {
-          ok <- ok &&
-            all(q$days >= q$hours_in_quarter / 24 * cfg$min_days_fraction_quarters)
-        }
-        if (!is.null(cfg$min_hours_fraction_quarters)) {
-          ok <- ok && all(q$hours_avail >= q$hours_in_quarter * cfg$min_hours_fraction_quarters)
-        }
-        if (!is.null(cfg$min_days_of_quarters)) {
-          ok <- ok && all(q$days >= cfg$min_days_of_quarters)
-        }
-      }
-      tibble::tibble(ok = isTRUE(ok))
+      cal <- cal[cal$year == .y$year, ]
+      details <- CAAQS_gate_details(.x, cfg, cal)
+      # TRUE only when every applicable criterion holds; the per-gate
+      # details are what the pipelines use for the GDADs' annual
+      # exceptions criteria ("The [annual fourth highest / 98th / 99th
+      # percentile based on the available data] exceeds the standard" and
+      # the NO2/SO2 relaxed 50%-per-quarter annual-mean criterion).
+      tibble::tibble(ok = details$days_ok && details$hours_ok)
     }) |>
     dplyr::ungroup() |>
     dplyr::arrange(.data$year) |>
@@ -393,6 +493,14 @@ CAAQS_has_enough_obs <- function(obs, completeness) {
 
 ## CAAQS Helpers ----------------------------------------------------------
 CAAQS_pm25 <- function(obs, thresholds) {
+  obs <- obs |>
+    dplyr::group_by(year = .data$date |> lubridate::year())
+  # Year-level completeness for the annual metrics: PM2.5 GDAD (PN 1483,
+  # 2012) sections 4.1.4 and 4.2.4 require "at least 75% valid daily-24hr-
+  # PM2.5 in the year" and "at least 60% ... in each calendar quarter".
+  # The 2012 document has no exceptions column, so a year failing these
+  # criteria contributes no metric values (see CAAQS_completeness()$pm25).
+  year_details <- obs |> CAAQS_year_gate_details(CAAQS_completeness()$pm25, "pm25")
   obs |>
     # Hourly means -> daily 24-hr means. PM2.5 GDAD (PN 1483, 2012) section
     # 4.1.1 (Equation 1): the daily 24hr-PM2.5 is the mean of the available
@@ -400,6 +508,7 @@ CAAQS_pm25 <- function(obs, thresholds) {
     # denominator in Equation 1 will be the number of hours available"), and
     # section 4.1.4 makes the day valid only when "at least 75% (18 hours)
     # of the 1-hour concentrations are available on the given day".
+    dplyr::ungroup() |>
     dplyr::group_by(
       date = .data$date |> lubridate::floor_date("days")
     ) |>
@@ -425,6 +534,18 @@ CAAQS_pm25 <- function(obs, thresholds) {
       # valid daily-24hr-PM2.5 values in the year.
       mean_of_daily_means = mean(.data$pm25_mean, na.rm = TRUE)
     ) |>
+    # The year-level completeness gates (sections 4.1.4/4.2.4) decide
+    # whether the year's metric values are valid; with no exceptions column
+    # in the 2012 GDAD there is no exception path (see
+    # CAAQS_completeness()$pm25), so gated-out years contribute nothing.
+    # The metric values are the same whether or not the year is gated in,
+    # so computing them for every year and keeping the gated-in ones is
+    # equivalent to evaluating the metrics on gated-in years only.
+    dplyr::left_join(year_details, by = "year") |>
+    dplyr::filter(.data$days_ok & .data$hours_ok) |>
+    dplyr::select(-dplyr::any_of(
+      c("days_ok", "hours_ok", "relaxed_quarters_ok")
+    )) |>
     # +3 year averages, +whether standard is met. Per sections 4.1.4 and
     # 4.2.4 a metric value is valid when its annual values (98P or annual
     # average) "are available for at least two of the required three years".
@@ -466,6 +587,17 @@ CAAQS_pm25 <- function(obs, thresholds) {
 }
 
 CAAQS_o3 <- function(obs, thresholds) {
+  obs <- obs |>
+    dplyr::group_by(year = .data$date |> lubridate::year())
+  # Year-level completeness for the annual fourth-highest metric: Ozone
+  # GDAD (2021) Table 5-3 (Annual fourth highest O3 Dmax 8-hour): "O3 Dmax
+  # 8-hour are available for at least 75% of the days in the period April 1
+  # to September 30". Under the annual row's column-3 exception ("The
+  # annual fourth highest exceeds the standard") a gated-out year still
+  # contributes its annual fourth highest when that value, computed on all
+  # available data of the year, exceeds the standard (see
+  # CAAQS_completeness()$o3).
+  year_details <- obs |> CAAQS_year_gate_details(CAAQS_completeness()$o3, "o3")
   obs |>
     # hourly mean -> 8-hour rolling mean, per the CCME Guidance Document on
     # Achievement Determination for Ozone (2021), eq. 5.1: the O3-8-hr for
@@ -487,6 +619,7 @@ CAAQS_o3 <- function(obs, thresholds) {
           .min_non_na = 6
         )
     ) |>
+    dplyr::ungroup() |>
     # 8-hour rolling means -> daily maximum over the 24 windows (J = 1 to 24)
     # ending in the day. Table 5-3 (Ozone Dmax 8-hour): "At least 18 (75%) of
     # the 24 O3-8-hr are available in the day", with the column-3 exception
@@ -517,9 +650,9 @@ CAAQS_o3 <- function(obs, thresholds) {
     # requirement to that period because it is "the time of year where the
     # annual fourth highest will likely be recorded in most of Canada".
     # The annual row's column-3 exception ("The annual fourth highest
-    # exceeds the standard") would also rank values when the season days
-    # criterion fails; see CAAQS_completeness() for the reason that is not
-    # implemented here.
+    # exceeds the standard") is applied to the result below: a year that
+    # fails the season days criterion still contributes its fourth highest
+    # when that value exceeds the standard.
     dplyr::filter(
       !(lubridate::month(.data$date) %in% c(1:3, 10:12))
     ) |>
@@ -529,6 +662,29 @@ CAAQS_o3 <- function(obs, thresholds) {
       .groups = "drop",
       fourth_highest_daily_max_8hr_mean_o3 = .data$daily_max_8hr_mean_o3[4]
     ) |>
+    # Annual-row exception (Table 5-3, column 3): gated-in years keep
+    # their fourth highest; gated-out years keep theirs only when it
+    # exceeds the standard (CAAQS_apply_annual_exception()). Years retained
+    # by neither are dropped entirely, so the 3-year rolling means below
+    # see only the years with a valid annual value.
+    dplyr::left_join(year_details, by = "year") |>
+    dplyr::mutate(
+      fourth_highest_daily_max_8hr_mean_o3 = CAAQS_apply_annual_exception(
+        .data$fourth_highest_daily_max_8hr_mean_o3,
+        year_ok = .data$days_ok,
+        exception = CAAQS_completeness()$o3$annual_metric_exception,
+        relaxed_ok = TRUE,
+        exceeds_standard = dplyr::coalesce(
+          .data$fourth_highest_daily_max_8hr_mean_o3 >
+            CAAQS_red_threshold(.data$year, thresholds$o3$`8hr`),
+          FALSE
+        )
+      )
+    ) |>
+    dplyr::filter(!is.na(.data$fourth_highest_daily_max_8hr_mean_o3)) |>
+    dplyr::select(-dplyr::any_of(
+      c("days_ok", "hours_ok", "relaxed_quarters_ok")
+    )) |>
     # +3 year averages, +whether standard is met. Per GDAD Table 5-3 the
     # metric value may be based on two of the possible three annual fourth
     # highest, so a 3-year window needs at least 2 available years.
@@ -551,8 +707,24 @@ CAAQS_o3 <- function(obs, thresholds) {
 }
 
 CAAQS_no2 <- function(obs, thresholds) {
+  obs <- obs |>
+    dplyr::group_by(year = .data$date |> lubridate::year())
+  # Year-level completeness for both metrics: Nitrogen Dioxide GDAD (2020)
+  # Table 5-3 requires the percentile row's days criteria ("The NO2 Dmax
+  # 1-hour are available for at least: 1. 75% of the days in a year; and
+  # 2. 60% of the days in each calendar quarter") and the annual metric
+  # value row's hourly criteria ("1. at least 75% of the NO2 1-hour are
+  # available in the year; and 2. at least 60% of the NO2 1-hour are
+  # available in each calendar quarter"). Under the annual rows' column-3
+  # exceptions ("The 98th percentile based on the available NO2 Dmax 1-hour
+  # exceeds the standard"; "1. at least 50% of the NO2 1-hour are available
+  # in each calendar quarter; and 2. the annual average exceeds the
+  # standard") a gated-out year still contributes the respective metric
+  # when those conditions hold (see CAAQS_completeness()$no2).
+  year_details <- obs |> CAAQS_year_gate_details(CAAQS_completeness()$no2, "no2")
   obs |>
     # + annual mean
+    dplyr::ungroup() |>
     dplyr::group_by(year = .data$date |> lubridate::year()) |>
     dplyr::mutate(annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE)) |>
     # hourly mean -> daily maxima, keeping only days meeting the daily
@@ -579,7 +751,12 @@ CAAQS_no2 <- function(obs, thresholds) {
     # daily maxima -> annual 98th percentile. Table 5-3 (Annual 98th
     # percentile of the NO2 Dmax 1-hour): the NO2 Dmax 1-hour must "be
     # available for at least: 1. 75% of the days in a year; and 2. 60% of
-    # the days in each calendar quarter", so the percentile is NA otherwise.
+    # the days in each calendar quarter". The percentile is computed for
+    # every year on all available data, and its validity -- gated-in years,
+    # plus gated-out years under the column-3 exception "The 98th
+    # percentile based on the available NO2 Dmax 1-hour exceeds the
+    # standard" -- is decided below, so the value never depends on the
+    # gates.
     dplyr::group_by(
       year = date |> lubridate::year(),
       .data$annual_mean_of_hourly
@@ -591,6 +768,44 @@ CAAQS_no2 <- function(obs, thresholds) {
       perc_98_of_daily_maxima = .data$daily_max_hourly_no2 |>
         CAAQS_rank_percentile(0.98)
     ) |>
+    # Annual-row exceptions (Table 5-3, column 3): gated-in years keep
+    # their values; gated-out years keep the 98th percentile only when it
+    # exceeds the standard, and the annual mean only when every calendar
+    # quarter holds at least 50% of its NO2 1-hour AND the annual average
+    # exceeds the standard. Years retained by neither are dropped
+    # entirely.
+    dplyr::left_join(year_details, by = "year") |>
+    dplyr::mutate(
+      perc_98_of_daily_maxima = CAAQS_apply_annual_exception(
+        .data$perc_98_of_daily_maxima,
+        year_ok = .data$days_ok,
+        exception = CAAQS_completeness()$no2$annual_metric_exception,
+        relaxed_ok = TRUE,
+        exceeds_standard = dplyr::coalesce(
+          .data$perc_98_of_daily_maxima >
+            CAAQS_red_threshold(.data$year, thresholds$no2$hourly),
+          FALSE
+        )
+      ),
+      annual_mean_of_hourly = CAAQS_apply_annual_exception(
+        .data$annual_mean_of_hourly,
+        year_ok = .data$hours_ok,
+        exception = CAAQS_completeness()$no2$annual_mean_exception,
+        relaxed_ok = .data$relaxed_quarters_ok,
+        exceeds_standard = dplyr::coalesce(
+          .data$annual_mean_of_hourly >
+            CAAQS_red_threshold(.data$year, thresholds$no2$annual),
+          FALSE
+        )
+      )
+    ) |>
+    dplyr::filter(
+      !is.na(.data$perc_98_of_daily_maxima) |
+        !is.na(.data$annual_mean_of_hourly)
+    ) |>
+    dplyr::select(-dplyr::any_of(
+      c("days_ok", "hours_ok", "relaxed_quarters_ok")
+    )) |>
     # +3 year averages, +standard for that year, +whether standard is met.
     # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
     # the possible three annual 98th percentiles.
@@ -630,8 +845,24 @@ CAAQS_no2 <- function(obs, thresholds) {
 }
 
 CAAQS_so2 <- function(obs, thresholds) {
+  obs <- obs |>
+    dplyr::group_by(year = date |> lubridate::year())
+  # Year-level completeness for both metrics: Sulphur Dioxide GDAD (2020)
+  # Table 5-3 requires the percentile row's days criteria ("The SO2 Dmax
+  # 1-hour are available for at least: 1. 75% of the days in a year; and
+  # 2. 60% of the days in each calendar quarter") and the annual metric
+  # value row's hourly criteria ("1. at least 75% of the SO2 1-hour are
+  # available in the year; and 2. at least 60% of the SO2 1-hour are
+  # available in each calendar quarter"). Under the annual rows' column-3
+  # exceptions ("The 99th percentile based on the available SO2 Dmax 1-hour
+  # exceeds the standard"; "1. at least 50% of the SO2 1-hour are available
+  # in each calendar quarter; and 2. the annual average exceeds the
+  # standard") a gated-out year still contributes the respective metric
+  # when those conditions hold (see CAAQS_completeness()$so2).
+  year_details <- obs |> CAAQS_year_gate_details(CAAQS_completeness()$so2, "so2")
   obs |>
     # + annual mean
+    dplyr::ungroup() |>
     dplyr::group_by(year = date |> lubridate::year()) |>
     dplyr::mutate(annual_mean_of_hourly = .data$so2 |> mean(na.rm = TRUE)) |>
     # hourly mean -> daily maxima, keeping only days meeting the daily
@@ -656,9 +887,13 @@ CAAQS_so2 <- function(obs, thresholds) {
     # daily maxima -> annual 99th percentile. Table 5-3 (Annual 99th
     # percentile of the SO2 Dmax 1-hour): the SO2 Dmax 1-hour must "be
     # available for at least: 1. 75% of the days in a year; and 2. 60% of
-    # the days in each calendar quarter", so the percentile is NA otherwise.
-    # Uses the GDAD percentile ranking approach (Appendix B): the Kth highest
-    # daily maximum, K = NDM - trunc(NDM * 0.99)
+    # the days in each calendar quarter". The percentile is computed for
+    # every year on all available data, and its validity -- gated-in years,
+    # plus gated-out years under the column-3 exception "The 99th
+    # percentile based on the available SO2 Dmax 1-hour exceeds the
+    # standard" -- is decided below. Uses the GDAD percentile ranking
+    # approach (Appendix B): the Kth highest daily maximum,
+    # K = NDM - trunc(NDM * 0.99)
     dplyr::group_by(
       year = date |> lubridate::year(),
       .data$annual_mean_of_hourly
@@ -668,6 +903,44 @@ CAAQS_so2 <- function(obs, thresholds) {
       perc_99_of_daily_maxima = .data$daily_max_hourly_so2 |>
         CAAQS_rank_percentile(0.99)
     ) |>
+    # Annual-row exceptions (Table 5-3, column 3): gated-in years keep
+    # their values; gated-out years keep the 99th percentile only when it
+    # exceeds the standard, and the annual mean only when every calendar
+    # quarter holds at least 50% of its SO2 1-hour AND the annual average
+    # exceeds the standard. Years retained by neither are dropped
+    # entirely.
+    dplyr::left_join(year_details, by = "year") |>
+    dplyr::mutate(
+      perc_99_of_daily_maxima = CAAQS_apply_annual_exception(
+        .data$perc_99_of_daily_maxima,
+        year_ok = .data$days_ok,
+        exception = CAAQS_completeness()$so2$annual_metric_exception,
+        relaxed_ok = TRUE,
+        exceeds_standard = dplyr::coalesce(
+          .data$perc_99_of_daily_maxima >
+            CAAQS_red_threshold(.data$year, thresholds$so2$hourly),
+          FALSE
+        )
+      ),
+      annual_mean_of_hourly = CAAQS_apply_annual_exception(
+        .data$annual_mean_of_hourly,
+        year_ok = .data$hours_ok,
+        exception = CAAQS_completeness()$so2$annual_mean_exception,
+        relaxed_ok = .data$relaxed_quarters_ok,
+        exceeds_standard = dplyr::coalesce(
+          .data$annual_mean_of_hourly >
+            CAAQS_red_threshold(.data$year, thresholds$so2$annual),
+          FALSE
+        )
+      )
+    ) |>
+    dplyr::filter(
+      !is.na(.data$perc_99_of_daily_maxima) |
+        !is.na(.data$annual_mean_of_hourly)
+    ) |>
+    dplyr::select(-dplyr::any_of(
+      c("days_ok", "hours_ok", "relaxed_quarters_ok")
+    )) |>
     # +3 year averages, +standard for that year, +whether standard is met.
     # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
     # the possible three annual 99th percentiles.
@@ -724,6 +997,30 @@ CAAQS_rank_percentile <- function(x, p) {
   }
   k <- n - floor(n * p + 1e-9)
   sort(x, decreasing = TRUE)[k]
+}
+
+## Annual-row exceptions criteria of the GDADs' data-completeness tables
+## (Table 5-3 column 3; see CAAQS_completeness() for the quoted rows),
+## applied to one metric's per-year values. A year meeting the metric's
+## completeness criteria (`year_ok`) contributes its value; a gated-out
+## year contributes its value only when the exception's conditions hold:
+## the exception is configured for the pollutant, the relaxed first
+## condition holds -- `relaxed_ok` is the "at least 50% of the [NO2 / SO2]
+## 1-hour are available in each calendar quarter" criterion of the NO2/SO2
+## annual metric value rows, and TRUE for the percentile-type rows whose
+## exception has no such first condition -- and the value "exceeds the
+## standard" (the CAAQS in force in the year, as in CAAQS_meets_standard()).
+## Values of years meeting neither branch are NA. The metric values must
+## be computed on all available data of each year beforehand: the annual
+## exceptions are a validity decision, not a recomputation. All arguments
+## are aligned vectors (one entry per year with data); `year_ok`,
+## `relaxed_ok` and `exceeds_standard` must be NA-free logicals.
+CAAQS_apply_annual_exception <- function(
+  value, year_ok, exception, relaxed_ok, exceeds_standard
+) {
+  keep <- year_ok | (exception & relaxed_ok & exceeds_standard)
+  value[!keep] <- NA_real_
+  value
 }
 
 ## The Red management level of the CAAQS in force in `year` for the

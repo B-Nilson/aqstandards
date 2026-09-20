@@ -52,9 +52,14 @@ guidance documents (Table 5-3 of the Ozone, NO2 and SO2 GDADs; sections
 4.1.4 and 4.2.4 of the PM2.5 GDAD; see \code{CAAQS_completeness()}): annual
 metric values are reported only for years meeting the applicable daily,
 annual and calendar-quarter criteria, and hours-per-year requirements are
-derived from the calendar rather than hardcoded leap-year arithmetic.
-Hourly datetimes are assumed to label the start of the averaging hour and
-to be in local standard time.
+derived from the calendar rather than hardcoded leap-year arithmetic. The
+GDADs' exceptions to those criteria are applied: a deficient day or a
+gated-out year is still retained when its value exceeds the standard (a
+gated-out year's annual metric is computed from all available data), and
+the NO2/SO2 annual-mean metric accepts the relaxed 50\%-per-calendar-
+quarter criterion of its Table 5-3 annual row when the annual average
+exceeds the standard. Hourly datetimes are assumed to label the start of
+the averaging hour and to be in local standard time.
 }
 \examples{
 obs <- data.frame(

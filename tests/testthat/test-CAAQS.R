@@ -601,6 +601,149 @@ test_that("CAAQS_completeness PM2.5 criteria follow PM2.5 GDAD sections 4.1.4 an
   expect_null(pm25$season)
 })
 
+test_that("a gated-out year with an exceeding annual fourth highest is retained per the Ozone GDAD Table 5-3 annual-row exception", {
+  # 2021: in-season valid days Aug 1 - Sep 30 gone -> 122/183 (66.7%) < 75%,
+  # so the year fails the annual criterion, but four plateau days at 70 ppb
+  # give an annual fourth highest of 70, exceeding the CAAQS in force (62 ppb
+  # for 2021-2024) -> the annual-row exception ("The annual fourth highest
+  # exceeds the standard") retains it. 2022 keeps a 45.4% gap but 168/183
+  # (91.8%) in-season days -> gated in, fh = 10. 2023 is complete.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  o3 <- rep(10, length(hours))
+  for (day in c(
+    "2021-04-10", "2021-05-10", "2021-06-10", "2021-07-10",
+    "2022-06-10", "2022-07-10"
+  )) {
+    o3[hours %in% make_hours(paste0(day, " 09"), paste0(day, " 16"))] <- 70
+  }
+  o3[hours >= lubridate::ymd_h("2021-08-01 00") &
+    hours < lubridate::ymd_h("2021-10-01 00")] <- NA_real_
+  o3[hours >= lubridate::ymd_h("2022-04-01 00") &
+    hours < lubridate::ymd_h("2022-05-16 00")] <- NA_real_
+
+  out <- CAAQS_o3(data.frame(date = hours, o3 = o3), CAAQS_thresholds())
+  expect_identical(out$year, c(2021, 2022, 2023))
+  expect_identical(
+    out$fourth_highest_daily_max_8hr_mean_o3,
+    c(70, 10, 10)
+  )
+  # 2023's 3-year window averages 2021 (retained by the exception), 2022 and
+  # 2023 -> mean(70, 10, 10) = 30.
+  expect_identical(out$`3yr_mean`, c(NA_real_, NA_real_, 30))
+})
+
+test_that("a gated-out year below the standard contributes no annual fourth highest", {
+  # Same data gaps as the retained case, but plateaus at 50 ppb: the annual
+  # fourth highest of 50 does not exceed the CAAQS in force (62 ppb), so the
+  # exception does not fire and 2021 contributes nothing.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  o3 <- rep(10, length(hours))
+  for (day in c(
+    "2021-04-10", "2021-05-10", "2021-06-10", "2021-07-10",
+    "2022-06-10", "2022-07-10"
+  )) {
+    o3[hours %in% make_hours(paste0(day, " 09"), paste0(day, " 16"))] <- 50
+  }
+  o3[hours >= lubridate::ymd_h("2021-08-01 00") &
+    hours < lubridate::ymd_h("2021-10-01 00")] <- NA_real_
+  o3[hours >= lubridate::ymd_h("2022-04-01 00") &
+    hours < lubridate::ymd_h("2022-05-16 00")] <- NA_real_
+
+  out <- CAAQS_o3(data.frame(date = hours, o3 = o3), CAAQS_thresholds())
+  expect_identical(out$year, c(2022, 2023))
+  expect_identical(out$fourth_highest_daily_max_8hr_mean_o3, c(10, 10))
+})
+
+test_that("a gated-out year with an exceeding 98th percentile is retained per the NO2 GDAD Table 5-3 annual-row exception", {
+  # 2021: Sep 15 - Dec 31 gone -> 257/365 days (70.4%) < 75% and Q4 has no
+  # valid days, so the year fails the percentile row's days criteria, but
+  # eight spike days at 100 ppb give an annual 98th percentile of 100
+  # (K = NDM - Trunc(NDM * 0.98)), exceeding the CAAQS in force (60 ppb for
+  # 2020-2024) -> the exception ("The 98th percentile based on the available
+  # NO2 Dmax 1-hour exceeds the standard") retains it. The annual mean of 5
+  # ppb does not exceed the standard and Q4 holds no hours, so neither the
+  # relaxed 50%-per-quarter criterion nor the annual-mean exception applies
+  # and 2021's annual mean is NA. 2022/2023 are gated in.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  no2 <- rep(5, length(hours))
+  spikes <- unlist(lapply(
+    2021:2023,
+    \(y) lubridate::ymd_h(paste0(y, "-06-0", 1:8, " 14"))
+  ))
+  no2[hours %in% spikes] <- 100
+  no2[hours >= lubridate::ymd_h("2021-09-15 00") &
+    hours < lubridate::ymd_h("2022-01-01 00")] <- NA_real_
+
+  out <- CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
+  expect_identical(out$year, c(2021, 2022, 2023))
+  expect_identical(out$perc_98_of_daily_maxima, c(100, 100, 100))
+  # 8 spike hours per year lift the complete years' mean to 5 + 95 * 8/8760.
+  expect_equal(
+    out$annual_mean_of_hourly,
+    c(NA_real_, rep(5 + 95 * 8 / 8760, 2))
+  )
+})
+
+test_that("the relaxed 50%-per-quarter annual-mean exception fires only on exceedance (NO2 GDAD Table 5-3 annual metric value row)", {
+  # 2021: Oct 1 - Nov 15 gone (46/92 = 50.0% of Q4's hours retained) -> the
+  # 75%/60% annual criteria fail, but the relaxed criterion ("at least 50% of
+  # the NO2 1-hour are available in each calendar quarter") holds. With a
+  # constant 20 ppb (above the 17 ppb CAAQS in force for 2020-2024) the
+  # annual average exceeds the standard, so the annual-metric-value exception
+  # retains 2021's mean. 2022/2023 are gated in.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  no2 <- rep(20, length(hours))
+  no2[hours >= lubridate::ymd_h("2021-10-01 00") &
+    hours <= lubridate::ymd_h("2021-11-15 23")] <- NA_real_
+
+  out <- CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
+  expect_identical(out$year, c(2021, 2022, 2023))
+  expect_identical(out$annual_mean_of_hourly, c(20, 20, 20))
+  # The percentile exception is separate: 2021's 98th percentile of 20 does
+  # not exceed the standard, so it contributes no percentile value.
+  expect_identical(out$perc_98_of_daily_maxima, c(NA_real_, 20, 20))
+
+  # The same gaps with a below-standard 5 ppb background: the annual average
+  # does not exceed the standard, the exception does not fire, and 2021 is
+  # dropped entirely.
+  no2b <- rep(5, length(hours))
+  no2b[hours >= lubridate::ymd_h("2021-10-01 00") &
+    hours <= lubridate::ymd_h("2021-11-15 23")] <- NA_real_
+  out <- CAAQS_no2(data.frame(date = hours, no2 = no2b), CAAQS_thresholds())
+  expect_identical(out$year, c(2022, 2023))
+  expect_identical(out$annual_mean_of_hourly, c(5, 5))
+})
+
+test_that("PM2.5 has no annual exception: a gated-out year contributes no metric (PM2.5 GDAD, PN 1483)", {
+  # The 2012 GDAD's completeness criteria (sections 4.1.4/4.2.4) have no
+  # exceptions column, so a year failing them contributes nothing even when
+  # its values exceed the standard: 2021 loses Jul 1 - Dec 31 (Q3/Q4 empty),
+  # its mean of 20 exceeds the 8.8 ppb CAAQS, but 2021 must not appear.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  pm25 <- rep(20, length(hours))
+  pm25[hours >= lubridate::ymd_h("2021-07-01 00") &
+    hours < lubridate::ymd_h("2022-01-01 00")] <- NA_real_
+
+  out <- CAAQS_pm25(data.frame(date = hours, pm25 = pm25), CAAQS_thresholds())
+  expect_identical(out$year, c(2022, 2023))
+  expect_identical(out$perc_98_of_daily_means, c(20, 20))
+  expect_identical(out$mean_of_daily_means, c(20, 20))
+})
+
+test_that("CAAQS_completeness flags which pollutants carry annual-row exceptions", {
+  comp <- CAAQS_completeness()
+  expect_true(comp$o3$annual_metric_exception)
+  expect_null(comp$o3$annual_mean_exception)
+  expect_true(comp$no2$annual_metric_exception)
+  expect_true(comp$no2$annual_mean_exception)
+  expect_true(comp$so2$annual_metric_exception)
+  expect_true(comp$so2$annual_mean_exception)
+  # PM2.5 sets the flags to FALSE explicitly: its 2012 GDAD has no
+  # exceptions column at all.
+  expect_false(comp$pm25$annual_metric_exception)
+  expect_false(comp$pm25$annual_mean_exception)
+})
+
 test_that("min_completeness is retired: all pollutants follow the GDAD gates", {
   # 61 days missing across the Jun-Jul quarter boundary leaves both
   # quarters above 60% of days (61/91 and 61/92) and the year above 75%

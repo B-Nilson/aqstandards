@@ -87,20 +87,27 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   example; the comparison uses the Red management level, i.e. the CAAQS
   in force in the day's year). This is a user-visible behaviour change:
   deficient days previously dropped are now retained when their value
-  exceeds the standard, which can only raise a metric value. The
-  remaining exceptions criteria are deliberately not implemented: the
-  annual-row exceptions ("The [annual fourth highest / 98th / 99th
-  percentile] exceeds the standard") would re-open ranking for years
-  already failed by their completeness criteria, and the NO2/SO2 annual
-  metric value exception ("at least 50% of the [pollutant] 1-hour are
-  available in each calendar quarter; and the annual average exceeds the
-  standard") rewrites the annual-mean criterion itself; each is
-  conservative to skip, since a year that fails completeness contributes
-  no value rather than one that can only raise the metric. PM2.5's 2012
-  GDAD predates the Table 5-3 format and has no data-completeness
-  exceptions column (its "exceptional events" procedures are an
-  administrative TF/EE designation process, not a data-completeness
-  rule), so none are implemented for PM2.5.
+  exceeds the standard, which can only raise a metric value.
+  The annual-row exceptions of Table 5-3 are now implemented as well:
+  a year that fails its annual completeness criteria still contributes
+  its annual fourth highest (O3: "The annual fourth highest exceeds the
+  standard") or its annual 98th/99th percentile (NO2/SO2: "The 98th/99th
+  percentile based on the available NO2/SO2 Dmax 1-hour exceeds the
+  standard") when that value, computed on all available data of the
+  year, exceeds the CAAQS in force in that year; and the NO2/SO2 annual
+  average is retained under its annual metric value row's exception when
+  at least 50% of the 1-hour values are available in each calendar
+  quarter (relaxing the 75%/60% criteria) and the annual average exceeds
+  the standard. Years retained by no exception contribute nothing, and a
+  year's metric value never depends on the year-level completeness gates
+  (the gates and exceptions decide only whether it is reported). This is
+  a user-visible behaviour change: gated-out years previously dropped
+  silently can now report a metric value and, through the 2-of-3 rule,
+  affect 3-year averages. PM2.5's 2012 GDAD predates the Table 5-3
+  format and has no data-completeness exceptions column (its
+  "exceptional events" procedures are an administrative TF/EE
+  designation process, not a data-completeness rule), so none are
+  implemented for PM2.5.
 - The `min_completeness` argument has been removed from `CAAQS()`: every
   pollutant now follows its guidance document's completeness gates, so
   the last heuristic (a uniform annual availability fraction, previously
