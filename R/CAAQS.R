@@ -173,19 +173,30 @@ CAAQS_pm25 <- function(obs, thresholds) {
 
 CAAQS_o3 <- function(obs, thresholds) {
   obs |>
-    # hourly mean -> 8 hourly mean
-    dplyr::group_by(
-      date = .data$date |>
-        lubridate::floor_date("8 hours")
+    # hourly mean -> 8-hour rolling mean (all consecutive windows starting at
+    # each hour, local standard time, per the CCME Guidance Document on
+    # Achievement Determination for Ozone); each window needs at least 6 of 8
+    # valid hours to produce an 8-hour mean. Windows starting late in the day
+    # spill into the next day; per the GDAD, a spilling window is attributed to
+    # the day of its start hour.
+    dplyr::mutate(
+      `8hr_mean_o3` = .data$o3 |>
+        handyr::rolling(
+          "mean",
+          .width = 8,
+          .direction = "forward",
+          .min_non_na = 6
+        ),
+      window_start_day = .data$date |> lubridate::floor_date("days")
     ) |>
-    dplyr::summarise(`8hr_mean_o3` = .data$o3 |> mean(na.rm = TRUE)) |>
-    # 8 hourly mean -> daily max
-    dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
+    # 8-hour rolling means -> daily maximum (max over windows starting that day)
+    dplyr::group_by(.data$window_start_day) |>
     dplyr::summarise(
-      daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE)
+      daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE),
+      .groups = "drop"
     ) |>
     # daily max -> annual 4th highest
-    dplyr::group_by(year = .data$date |> lubridate::year()) |>
+    dplyr::group_by(year = .data$window_start_day |> lubridate::year()) |>
     dplyr::arrange(dplyr::desc(.data$daily_max_8hr_mean_o3)) |>
     dplyr::summarise(
       .groups = "drop",
