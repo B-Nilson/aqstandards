@@ -5,11 +5,6 @@
 #' @param o3_1hr_ppb (Optional). Vector of hourly mean ozone (O3) concentrations (ppb).
 #' @param no2_1hr_ppb (Optional). Vector of hourly mean nitrogen dioxide (NO2) concentrations (ppb).
 #' @param so2_1hr_ppb (Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).
-#' @param min_completeness Deprecated. Data completeness is now assessed with the
-#'   pollutant-specific criteria in the CCME Guidance Documents on Achievement
-#'   Determination (see `CAAQS_completeness()`); this argument is ignored except
-#'   for PM2.5, whose guidance has not been reviewed and which keeps a uniform
-#'   annual hourly-availability gate (0.5 by default).
 #'
 #' @description
 #' The Canadian Ambient Air Quality Standards (CAAQS) are part of a collaborative national Air Quality Management System (AQMS), to better protect human health and the environment.
@@ -25,19 +20,21 @@
 #' average of the annual 98th (99th) percentile of daily maximum 1-hour
 #' concentrations, with percentiles computed by the GDAD percentile ranking
 #' approach (the Kth highest value, K = n - trunc(n * p), with no
-#' interpolation); annual metrics are annual means of hourly concentrations;
-#' and the PM2.5 metrics are the 3-year average of the annual 98th percentile
-#' of daily means and the 3-year average of annual means. For O3, NO2 and SO2
-#' 3-year metric values are computed when at least two of the three annual
-#' values are available.
+#' interpolation); annual metrics are annual means of hourly concentrations; the
+#' PM2.5 metrics are the 3-year average of the annual 98th percentile of daily
+#' 24-hr means (over days with at least 18 available hours) computed by the
+#' GDAD percentile ranking approach and the 3-year average of annual means of
+#' valid daily values. For O3, NO2, SO2 and PM2.5 3-year metric values are
+#' computed when at least two of the three annual values are available.
 #'
 #' Data completeness is assessed with the pollutant-specific criteria of the
-#' guidance documents' Table 5-3 (see `CAAQS_completeness()`): annual metric
-#' values are reported only for years meeting the applicable daily, annual and
-#' calendar-quarter criteria, and hours-per-year requirements are derived from
-#' the calendar rather than hardcoded leap-year arithmetic. Hourly datetimes
-#' are assumed to label the start of the averaging hour and to be in local
-#' standard time.
+#' guidance documents (Table 5-3 of the Ozone, NO2 and SO2 GDADs; sections
+#' 4.1.4 and 4.2.4 of the PM2.5 GDAD; see `CAAQS_completeness()`): annual
+#' metric values are reported only for years meeting the applicable daily,
+#' annual and calendar-quarter criteria, and hours-per-year requirements are
+#' derived from the calendar rather than hardcoded leap-year arithmetic.
+#' Hourly datetimes are assumed to label the start of the averaging hour and
+#' to be in local standard time.
 #'
 #' @references
 #' \itemize{
@@ -45,6 +42,7 @@
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
 #' }
 #' @family Canadian Air Quality
 #' @family Air Quality Standards
@@ -71,8 +69,7 @@ CAAQS <- function(
   pm25_1hr_ugm3 = NULL,
   o3_1hr_ppb = NULL,
   no2_1hr_ppb = NULL,
-  so2_1hr_ppb = NULL,
-  min_completeness = 0.5
+  so2_1hr_ppb = NULL
 ) {
   # Join inputs
   obs <- dplyr::bind_cols(
@@ -85,12 +82,8 @@ CAAQS <- function(
     dplyr::mutate(year = lubridate::year(.data$date))
 
   # Assess data completeness for each pollutant annually, using the
-  # pollutant-specific criteria of the CCME GDADs (Table 5-3). The
-  # `min_completeness` argument applies only to PM2.5, whose guidance
-  # document has not yet been reviewed (see `CAAQS_completeness()`).
-  completeness <- CAAQS_completeness()
-  completeness$pm25$min_hours_fraction_year <- min_completeness
-  has_enough_obs <- CAAQS_has_enough_obs(obs, completeness)
+  # pollutant-specific criteria of the CCME GDADs (see CAAQS_completeness()).
+  has_enough_obs <- CAAQS_has_enough_obs(obs, CAAQS_completeness())
 
   # Check for 3 consecutive years for any pollutant. `lag()` returns NA for
   # the absent years created by tidyr::complete(), and NA + TRUE is NA, so
@@ -151,7 +144,8 @@ CAAQS <- function(
 ## Data-completeness configuration for each pollutant, one row per criterion,
 ## quoting the Data completeness criteria (column 2) of Table 5-3 of the CCME
 ## Guidance Document on Achievement Determination for each pollutant (Ozone
-## 2021; Nitrogen Dioxide 2020; Sulphur Dioxide 2020). The exceptions in
+## 2021; Nitrogen Dioxide 2020; Sulphur Dioxide 2020; Fine Particulate Matter
+## and Ozone 2012, PN 1483, sections 4.1.4 and 4.2.4 for PM2.5). The exceptions in
 ## column 3 ("the [metric] exceeds the standard") are not implemented here;
 ## deficient values are dropped rather than retained when they exceed.
 CAAQS_completeness <- function() {
@@ -208,9 +202,25 @@ CAAQS_completeness <- function() {
       min_hours_fraction_quarters = 0.6,
       min_days_of_quarters = NULL
     ),
-    # PM2.5 GDAD not yet reviewed (issue #3): keep the package's previous
-    # uniform annual hourly-availability heuristic for PM2.5.
-    pm25 = list(min_hours_fraction_year = 0.5)
+    # PM2.5 Guidance Document on Achievement Determination (PN 1483, "Fine
+    # Particulate Matter and Ozone", 2012), sections 4.1.1, 4.1.4 and 4.2.4:
+    # the daily 24hr-PM2.5 is valid when "at least 75% (18 hours) of the
+    # 1-hour concentrations are available on the given day", and both the
+    # annual 98P and the annual average require "at least 75% valid daily-
+    # 24hr-PM2.5 in the year" and "at least 60% valid daily-24hr-PM2.5 in
+    # each calendar quarter" (quarters Q1 January 1 - March 31 through Q4
+    # October 1 - December 31). Unlike NO2/SO2 there is no hours-per-year
+    # criterion: the annual gates are expressed in valid days only.
+    pm25 = list(
+      min_hours_of_day = 18L,
+      season = NULL,
+      min_days_fraction = 0.75,
+      min_days_of_year = NULL,
+      min_days_fraction_quarters = 0.6,
+      min_hours_fraction_year = NULL,
+      min_hours_fraction_quarters = NULL,
+      min_days_of_quarters = NULL
+    )
   )
 }
 
@@ -357,27 +367,45 @@ CAAQS_has_enough_obs <- function(obs, completeness) {
 ## CAAQS Helpers ----------------------------------------------------------
 CAAQS_pm25 <- function(obs, thresholds) {
   obs |>
-    # Hourly mean -> daily mean
+    # Hourly means -> daily 24-hr means. PM2.5 GDAD (PN 1483, 2012) section
+    # 4.1.1 (Equation 1): the daily 24hr-PM2.5 is the mean of the available
+    # 1-hour concentrations ("If at least 18 hours are available, the
+    # denominator in Equation 1 will be the number of hours available"), and
+    # section 4.1.4 makes the day valid only when "at least 75% (18 hours)
+    # of the 1-hour concentrations are available on the given day".
     dplyr::group_by(
       date = .data$date |> lubridate::floor_date("days")
     ) |>
-    dplyr::summarise(dplyr::across(
-      dplyr::everything(),
-      c(mean = \(x) mean(x, na.rm = TRUE))
-    )) |>
-    # Daily mean -> annual 98th percentile and annual mean
+    dplyr::summarise(
+      .groups = "drop",
+      pm25_mean = .data$pm25 |> mean(na.rm = TRUE),
+      daily_avail_hours = sum(!is.na(.data$pm25))
+    ) |>
+    dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$pm25$min_hours_of_day) |>
+    # Valid daily means -> annual 98th percentile and annual average
     dplyr::group_by(year = lubridate::year(.data$date)) |>
     dplyr::summarise(
       .groups = "drop",
+      # Annual 98th percentile via the GDAD percentile ranking approach
+      # (section 4.1.2, Steps 1-3): the (N - Trunc(N * 0.98))th highest
+      # daily 24hr-PM2.5, with ties repeated in rank order (worked example
+      # N = 275 -> 6th highest; Table 3). Footnote 11 forbids software whose
+      # percentile procedure differs, so stats::quantile() (type 7) is not
+      # compliant.
       perc_98_of_daily_means = .data$pm25_mean |>
-        stats::quantile(0.98, na.rm = T) |>
-        unname(),
+        CAAQS_rank_percentile(0.98),
+      # Annual average per section 4.2.2 (Equation 3): the mean of the
+      # valid daily-24hr-PM2.5 values in the year.
       mean_of_daily_means = mean(.data$pm25_mean, na.rm = TRUE)
     ) |>
-    # +3 year averages, +whether standard is met
+    # +3 year averages, +whether standard is met. Per sections 4.1.4 and
+    # 4.2.4 a metric value is valid when its annual values (98P or annual
+    # average) "are available for at least two of the required three years".
     dplyr::mutate(
       `3yr_mean_of_perc_98` = .data$perc_98_of_daily_means |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
+        handyr::rolling(
+          "mean", .width = 3, .direction = "backward", .min_non_na = 2
+        ),
       management_level_daily = .data$year |>
         sapply(
           \(y) {
@@ -389,7 +417,9 @@ CAAQS_pm25 <- function(obs, thresholds) {
           }
         ),
       `3yr_mean_of_means` = .data$mean_of_daily_means |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
+        handyr::rolling(
+          "mean", .width = 3, .direction = "backward", .min_non_na = 2
+        ),
       management_level_annual = .data$year |>
         sapply(
           \(y) {
@@ -672,7 +702,12 @@ CAAQS_meets_standard <- function(year, metric, thresholds) {
 # right-open (inclusive-Red) bins with strict > comparisons in
 # CAAQS_meets_standard(). The CAAQS O3 metric is defined in the CCME Guidance
 # Document on Achievement Determination for Ozone (2021): 3-year average of the
-# annual 4th-highest daily maximum 8-hour rolling average.
+# annual 4th-highest daily maximum 8-hour rolling average. The CAAQS PM2.5
+# metrics are defined in the CCME Guidance Document on Achievement
+# Determination for Fine Particulate Matter and Ozone (2012, PN 1483),
+# sections 4.1 and 4.2: 3-year averages of the annual 98th percentile of
+# daily 24-hr means (rank-percentile) and of annual averages of valid daily
+# 24-hr means.
 CAAQS_thresholds <- function() {
   list(
     pm25 = list(

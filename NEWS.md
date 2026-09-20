@@ -54,8 +54,7 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   hourly input timestamps are treated as labelling the start of the
   averaging hour (so hour-ending values map directly onto hourly rows).
   The GDADs' remaining rounding rules (decimal places and rounding of
-  metric values before comparison) and the PM2.5 GDAD are not yet
-  covered; see the completeness section below.
+  metric values before comparison) are not yet covered.
 - Data completeness is now assessed with the pollutant-specific criteria
   of the guidance documents (Table 5-3 of each GDAD) instead of the
   former uniform annual 50% hourly-availability heuristic. Annual metric
@@ -71,17 +70,38 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
     its days and 60% of the days in each calendar quarter (NO2 GDAD 2020
     and SO2 GDAD 2020, Table 5-3); and the annual-mean metric additionally
     requires 75% of hours available in the year and 60% in each quarter.
+  - PM2.5: daily 24hr-PM2.5 values are computed only for days with at
+    least 75% (18) of the 1-hour concentrations available, and the annual
+    98th percentile and annual average are reported only for years with
+    valid daily values on at least 75% of the year's days and 60% of the
+    days in each calendar quarter (PM2.5 GDAD 2012, PN 1483, sections
+    4.1.4 and 4.2.4). Unlike NO2/SO2 there is no hours-per-year criterion:
+    the annual gates are expressed in valid days only. PM2.5 joins the
+    same completeness configuration (CAAQS_completeness()) and gate
+    logic as the other pollutants.
   The Table 5-3 exceptions criteria (values that exceed the standard are
   retained despite missing data) are not implemented: deficient days are
   dropped, which can only lower a metric value.
-- `min_completeness` now applies only to PM2.5, whose guidance document
-  has not been reviewed; it is ignored for O3, NO2 and SO2, whose gates
-  follow the guidance documents. This is a user-visible behaviour
-  change: years accepted (or rejected) by the old 50% heuristic may now
-  be rejected (or accepted) where the Table 5-3 criteria differ.
+- The `min_completeness` argument has been removed from `CAAQS()`: every
+  pollutant now follows its guidance document's completeness gates, so
+  the last heuristic (a uniform annual availability fraction, previously
+  retained for PM2.5) is retired. This is a user-visible behaviour
+  change: calls passing `min_completeness` now fail with an "unused
+  argument" error, and PM2.5 years are judged by the PM2.5 GDAD criteria
+  (75% of days in the year, 60% in each quarter) rather than a
+  user-set hourly-availability fraction.
 - Hours-per-year requirements are derived from the calendar via
   lubridate's leap-year rule instead of the previously hardcoded
   `year %% 4` check, which mishandled century years such as 2100.
+- The PM2.5 annual 98th percentile is computed with the GDAD percentile
+  ranking approach (PM2.5 GDAD 2012, PN 1483, section 4.1.2, Steps 1-3):
+  the (N - Trunc(N x 0.98))th highest daily 24hr-PM2.5 (worked example
+  N = 275 -> 6th highest), replacing stats::quantile() (type 7), which
+  footnote 11 of the same document explicitly disallows. The PM2.5
+  annual average is the mean of the valid daily-24hr-PM2.5 values
+  (section 4.2.2, Equation 3), and a 3-year metric value is valid when
+  its annual values are available for at least two of the required
+  three years (sections 4.1.4/4.2.4).
 - Fixed an error when the data span non-consecutive years: a year absent
   from the data (for example 2022 in a 2021-2024 series) no longer
   propagates NA through the three-consecutive-years completeness check.

@@ -9,8 +9,7 @@ CAAQS(
   pm25_1hr_ugm3 = NULL,
   o3_1hr_ppb = NULL,
   no2_1hr_ppb = NULL,
-  so2_1hr_ppb = NULL,
-  min_completeness = 0.5
+  so2_1hr_ppb = NULL
 )
 }
 \arguments{
@@ -23,12 +22,6 @@ CAAQS(
 \item{no2_1hr_ppb}{(Optional). Vector of hourly mean nitrogen dioxide (NO2) concentrations (ppb).}
 
 \item{so2_1hr_ppb}{(Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).}
-
-\item{min_completeness}{Deprecated. Data completeness is now assessed with the
-pollutant-specific criteria in the CCME Guidance Documents on Achievement
-Determination (see \code{CAAQS_completeness()}); this argument is ignored except
-for PM2.5, whose guidance has not been reviewed and which keeps a uniform
-annual hourly-availability gate (0.5 by default).}
 }
 \value{
 a list of tibbles (data.frames), one tibble per pollutant provided with annual CAAQS metrics and management levels
@@ -47,19 +40,21 @@ ending the averaging period; the NO2 (SO2) hourly metric is the 3-year
 average of the annual 98th (99th) percentile of daily maximum 1-hour
 concentrations, with percentiles computed by the GDAD percentile ranking
 approach (the Kth highest value, K = n - trunc(n * p), with no
-interpolation); annual metrics are annual means of hourly concentrations;
-and the PM2.5 metrics are the 3-year average of the annual 98th percentile
-of daily means and the 3-year average of annual means. For O3, NO2 and SO2
-3-year metric values are computed when at least two of the three annual
-values are available.
+interpolation); annual metrics are annual means of hourly concentrations; the
+PM2.5 metrics are the 3-year average of the annual 98th percentile of daily
+24-hr means (over days with at least 18 available hours) computed by the
+GDAD percentile ranking approach and the 3-year average of annual means of
+valid daily values. For O3, NO2, SO2 and PM2.5 3-year metric values are
+computed when at least two of the three annual values are available.
 
 Data completeness is assessed with the pollutant-specific criteria of the
-guidance documents' Table 5-3 (see \code{CAAQS_completeness()}): annual metric
-values are reported only for years meeting the applicable daily, annual and
-calendar-quarter criteria, and hours-per-year requirements are derived from
-the calendar rather than hardcoded leap-year arithmetic. Hourly datetimes
-are assumed to label the start of the averaging hour and to be in local
-standard time.
+guidance documents (Table 5-3 of the Ozone, NO2 and SO2 GDADs; sections
+4.1.4 and 4.2.4 of the PM2.5 GDAD; see \code{CAAQS_completeness()}): annual
+metric values are reported only for years meeting the applicable daily,
+annual and calendar-quarter criteria, and hours-per-year requirements are
+derived from the calendar rather than hardcoded leap-year arithmetic.
+Hourly datetimes are assumed to label the start of the averaging hour and
+to be in local standard time.
 }
 \examples{
 obs <- data.frame(
@@ -81,6 +76,7 @@ CAAQS(
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
+\item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
 }
 }
 \seealso{

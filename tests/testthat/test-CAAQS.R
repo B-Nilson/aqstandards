@@ -469,28 +469,98 @@ test_that("an incomplete year invalidates the metrics that depend on it", {
   expect_identical(output$management_level_hourly, c(NA, NA, "Green"))
 })
 
-test_that("min_completeness now applies only to PM2.5, whose guidance is unreviewed", {
-  hours <- make_hours("2021-01-01 00", "2025-12-31 23")
+test_that("CAAQS_pm25 daily means require 18 of 24 hours per PM2.5 GDAD sections 4.1.1/4.1.4", {
+  # 2021 with ten full-day spike values (25-34 ug/m3): the ranking-approach
+  # 98th percentile is the 365 - Trunc(0.98 * 365) = 8th highest daily
+  # 24hr-PM2.5 (PM2.5 GDAD section 4.1.2), i.e. 27. (Type-7 interpolation
+  # would return 27.72, so this also pins the ranking approach.)
+  hours <- make_hours("2021-01-01 00", "2021-12-31 23")
   pm25 <- rep(5, length(hours))
-  pm25[hours >= lubridate::ymd_h("2022-03-01 00") &
-         hours < lubridate::ymd_h("2022-05-01 00")] <- NA
-  # ~16.4% of 2022 missing: passes the 0.5 default but fails a 0.9 gate,
-  # which drops 2022 with a warning (2023-2025 remain three consecutive
-  # complete years, so no error).
-  expect_warning(
-    CAAQS(dates = hours, pm25_1hr_ugm3 = pm25, min_completeness = 0.9),
-    "Insufficient data"
+  for (i in seq_along(1:10)) {
+    day <- c(
+      "06-01", "06-15", "07-01", "07-15", "08-01",
+      "08-15", "09-01", "09-15", "10-01", "10-15"
+    )[i]
+    pm25[hours %in% make_hours(paste0("2021-", day, " 00"), paste0("2021-", day, " 23"))] <-
+      24 + i
+  }
+
+  output <- CAAQS_pm25(
+    data.frame(date = hours, pm25 = pm25),
+    CAAQS_thresholds()
   )
-  expect_no_warning(
-    CAAQS(dates = hours, pm25_1hr_ugm3 = pm25)
+  expect_equal(output$perc_98_of_daily_means, 27)
+
+  # Blank out 7 hours of the Aug 15 day (30 ug/m3): 17 < 18 valid hours, so
+  # the daily 24hr-PM2.5 is invalid (section 4.1.1) and the day is excluded
+  # from the ranking: the 98th percentile falls from 27 to the next spike
+  # (26), and 30 no longer appears in the year's daily values.
+  pm25[hours %in% make_hours("2021-08-15 09", "2021-08-15 15")] <- NA
+  output <- CAAQS_pm25(
+    data.frame(date = hours, pm25 = pm25),
+    CAAQS_thresholds()
   )
-  # For NO2 the argument is ignored: 16.4% of 2022 missing passes the fixed
-  # GDAD gates regardless of min_completeness, so no warning is issued even
-  # at 0.99.
+  expect_equal(output$perc_98_of_daily_means, 26)
+  expect_false(30 %in% unlist(output$perc_98_of_daily_means))
+})
+
+test_that("CAAQS_pm25 annual metrics require 75% of valid days and 60% per quarter (PM2.5 GDAD sections 4.1.4/4.2.4)", {
+  has <- function(hours, pm25) {
+    CAAQS_has_enough_obs(
+      data.frame(date = hours, pm25 = pm25),
+      CAAQS_completeness()
+    )$pm25
+  }
+  # Complete 2021-2023: every criterion holds.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  pm25 <- rep(5, length(hours))
+  expect_identical(has(hours, pm25), c(TRUE, TRUE, TRUE))
+
+  # 2022 with July 1 onward missing: Q3 (and Q4) have 0 valid days
+  # (< 60% of the quarter), so 2022 fails completeness. 2023 is emptied
+  # entirely by the same assignment and fails as well; 2021 is untouched.
+  pm25[hours >= lubridate::ymd_h("2022-07-01 00")] <- NA
+  expect_identical(has(hours, pm25), c(TRUE, FALSE, FALSE))
+
+  # Missing 9 days from every month (108 days, 29.6% of the year) keeps
+  # every quarter above 60% (about 90% of days each) but fails the
+  # year-wide 75%-of-days criterion (257/365 = 70%).
+  pm25 <- rep(5, length(hours))
+  pm25[as.integer(format(hours, "%d")) <= 9] <- NA
+  expect_identical(has(hours, pm25), c(FALSE, FALSE, FALSE))
+})
+
+test_that("CAAQS_completeness PM2.5 criteria follow PM2.5 GDAD sections 4.1.4 and 4.2.4", {
+  # Daily: "at least 75% (18 hours) of the 1-hour concentrations are
+  # available on the given day"; annual (both metrics): "at least 75% valid
+  # daily-24hr-PM2.5 in the year" and "at least 60% ... in each calendar
+  # quarter". Unlike NO2/SO2 there is no hours-per-year criterion.
+  pm25 <- CAAQS_completeness()$pm25
+  expect_equal(pm25$min_hours_of_day, 18L)
+  expect_equal(pm25$min_days_fraction, 0.75)
+  expect_equal(pm25$min_days_fraction_quarters, 0.6)
+  expect_null(pm25$min_hours_fraction_year)
+  expect_null(pm25$min_hours_fraction_quarters)
+  expect_null(pm25$season)
+})
+
+test_that("min_completeness is retired: all pollutants follow the GDAD gates", {
+  # 61 days missing across the Jun-Jul quarter boundary leaves both
+  # quarters above 60% of days (61/91 and 61/92) and the year above 75%
+  # (304/365), so the data pass the GDAD criteria for every pollutant and
+  # no warning is issued.
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  gap <- hours >= lubridate::ymd_h("2022-06-01 00") &
+    hours < lubridate::ymd_h("2022-08-01 00")
+  pm25 <- rep(5, length(hours))
+  pm25[gap] <- NA
   no2 <- rep(1, length(hours))
-  no2[hours >= lubridate::ymd_h("2022-03-01 00") &
-        hours < lubridate::ymd_h("2022-05-01 00")] <- NA
-  expect_no_warning(
-    CAAQS(dates = hours, no2_1hr_ppb = no2, min_completeness = 0.99)
+  no2[gap] <- NA
+  expect_no_warning(CAAQS(dates = hours, pm25_1hr_ugm3 = pm25, no2_1hr_ppb = no2))
+
+  # The heuristic argument itself has been removed from the signature.
+  expect_error(
+    CAAQS(dates = hours, pm25_1hr_ugm3 = pm25, min_completeness = 0.9),
+    "unused argument"
   )
 })
