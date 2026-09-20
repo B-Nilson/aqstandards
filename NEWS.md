@@ -172,7 +172,11 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   ranking, rounding cascades, cross-midnight window attribution and
   band-edge classification - each marked as GDAD-derived or
   current-behaviour-pinning, for the planned regression-test issue;
-  re-running the generator reproduces the document byte-for-byte.
+  re-running the generator reproduces the document byte-for-byte. The
+  document embeds the scenario helpers it uses (owned by
+  `tests/testthat/helper-CAAQS.R`, shared with the tests), records the
+  coverage caveats, and a test asserts the committed document matches a
+  fresh regeneration.
 
 ## AQHI+
 

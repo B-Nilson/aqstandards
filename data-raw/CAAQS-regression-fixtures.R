@@ -13,22 +13,18 @@
 ## No random number generation is used anywhere: every input series is a
 ## constant or an exact date/value list.
 
-pkgload::load_all(quiet = TRUE)
+pkgload::load_all(quiet = TRUE, helpers = FALSE)
 
 # Pin the print width: tibble printing adapts to it and the generated
 # document must be byte-for-byte reproducible (100 keeps every selected
 # column of every fixture visible).
 options(width = 100L)
 
-make_hours <- function(start, end) {
-  seq(lubridate::ymd_h(start), lubridate::ymd_h(end), "1 hours")
-}
-# Set the hours of `day` from 09:00 to 16:00 (8 consecutive hourly
-# timestamps) to `value`.
-plateau <- function(hours, values, day, value, from = "09", to = "16") {
-  values[hours %in% make_hours(paste(day, from), paste(day, to))] <- value
-  values
-}
+# Scenario helpers (make_hours, plateau) live in
+# tests/testthat/helper-CAAQS.R, shared with the test files; source the
+# single owner so the fixture inputs run against the same helpers.
+source("tests/testthat/helper-CAAQS.R")
+
 expect_columns <- function(out, cols) out[, c("year", cols)]
 
 fixtures <- list()
@@ -669,7 +665,6 @@ fixtures$band_edge_classification <- list(
 results <- list()
 for (nm in names(fixtures)) {
   fx <- fixtures[[nm]]
-  message("Running fixture: ", nm)
   value <- eval(fx$input)
   # Extract the data.frame-ish result (fixtures may return a list of them).
   frames <- if (is.list(value) && !is.data.frame(value)) value else list(value)
@@ -696,6 +691,23 @@ lines <- c(
   "output **computed by running the scenario against the package as",
   "committed** - regenerate with `Rscript data-raw/CAAQS-regression-fixtures.R`",
   "and the document must be reproduced byte-for-byte.",
+  "",
+  "Helpers: the input blocks call two scenario helpers, owned by",
+  "`tests/testthat/helper-CAAQS.R` and shared with the package's tests;",
+  "their definitions are embedded verbatim below so every fixture is",
+  "runnable as written:",
+  ""
+)
+lines <- c(lines, "```r", readLines("tests/testthat/helper-CAAQS.R"), "```", "")
+lines <- c(
+  lines,
+  "Coverage caveats: every completeness and exceptions criterion of the",
+  "four guidance documents has at least one fixture except three SO2 cases",
+  "(daily-row exceedance retention, the annual-row percentile exception,",
+  "and the annual-metric-value relaxed path), omitted as NO2 twins - they",
+  "exercise the identical shared code paths and differ only in the",
+  "pollutant name and percentile; see fixtures no2_daily_exceedance_retention,",
+  "no2_annual_row_exception and no2_50pct_quarter_exception.",
   "",
   "Provenance legend: **GDAD** = the expectation follows from quoted",
   "guidance-document wording (cited per fixture); **PIN** = the expectation",

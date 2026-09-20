@@ -7,6 +7,39 @@ output **computed by running the scenario against the package as
 committed** - regenerate with `Rscript data-raw/CAAQS-regression-fixtures.R`
 and the document must be reproduced byte-for-byte.
 
+Helpers: the input blocks call two scenario helpers, owned by
+`tests/testthat/helper-CAAQS.R` and shared with the package's tests;
+their definitions are embedded verbatim below so every fixture is
+runnable as written:
+
+```r
+# Shared scenario helpers for CAAQS tests and the regression-fixture
+# generator (data-raw/CAAQS-regression-fixtures.R sources this file so the
+# fixture inputs run against the same helpers the tests use). testthat
+# auto-sources every helper-*.R before the test files.
+
+# Hourly timestamps from `start` to `end`, inclusive, one hour apart;
+# arguments are the "YYYY-MM-DD HH" strings lubridate::ymd_h() parses.
+make_hours <- function(start, end) {
+  seq(lubridate::ymd_h(start), lubridate::ymd_h(end), "1 hours")
+}
+
+# Set the hours of `day` from 09:00 to 16:00 (8 consecutive hourly
+# timestamps) to `value`.
+plateau <- function(hours, values, day, value, from = "09", to = "16") {
+  values[hours %in% make_hours(paste(day, from), paste(day, to))] <- value
+  values
+}
+```
+
+Coverage caveats: every completeness and exceptions criterion of the
+four guidance documents has at least one fixture except three SO2 cases
+(daily-row exceedance retention, the annual-row percentile exception,
+and the annual-metric-value relaxed path), omitted as NO2 twins - they
+exercise the identical shared code paths and differ only in the
+pollutant name and percentile; see fixtures no2_daily_exceedance_retention,
+no2_annual_row_exception and no2_50pct_quarter_exception.
+
 Provenance legend: **GDAD** = the expectation follows from quoted
 guidance-document wording (cited per fixture); **PIN** = the expectation
 pins current behaviour that the guidance does not uniquely determine.
@@ -589,7 +622,7 @@ Input:
     list(four_spikes = out, three_spikes = out2)
 ```
 
-Expected: four_spikes: perc_99 = 100 (the 4th highest of 365 daily maxima). three_spikes: perc_99 = 1 (the 4th highest is background). Type-7 interpolation would return a non-measured value in both.
+Expected: four_spikes: perc_99 = 100 (the 4th highest of 365 daily maxima). three_spikes: perc_99 = 1 (the 4th highest is background). stats::quantile() (type 7) would return 1 for four_spikes, missing all four exceedance days.
 
 Exact expected output (computed):
 

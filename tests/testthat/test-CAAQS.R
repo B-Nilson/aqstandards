@@ -1,6 +1,6 @@
-make_hours <- function(start, end) {
-  seq(lubridate::ymd_h(start), lubridate::ymd_h(end), "1 hours")
-}
+# make_hours() and the other scenario helpers live in helper-CAAQS.R,
+# which testthat sources before the test files (the fixture generator
+# data-raw/CAAQS-regression-fixtures.R sources the same file).
 
 test_that("CAAQS returns expected output", {
   obs <- data.frame(
