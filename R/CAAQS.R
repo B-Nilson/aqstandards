@@ -14,7 +14,20 @@
 #' Management levels (Green -> Yellow -> Orange -> Red) are defined for each pollutant standard.
 #' A "Red" level indicates exceedance of the CAAQS and management plans are typically developed for regions at "Orange" or worse levels.
 #'
-#' @references \url{https://ccme.ca/en/air-quality-report}
+#' Metrics follow the CCME Guidance Documents on Achievement Determination:
+#' the O3 metric is the 3-year average of the annual 4th-highest daily maximum
+#' 8-hour rolling average; the NO2 (SO2) hourly metric is the 3-year average of
+#' the annual 98th (99th) percentile of daily maximum 1-hour concentrations;
+#' annual metrics are annual means of hourly concentrations; and the PM2.5
+#' metrics are the 3-year average of the annual 98th percentile of daily means
+#' and the 3-year average of annual means. Datetimes are assumed to be in
+#' local standard time.
+#'
+#' @references
+#' \itemize{
+#'   \item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+#' }
 #' @family Canadian Air Quality
 #' @family Air Quality Standards
 #'
@@ -108,7 +121,7 @@ CAAQS <- function(
     dplyr::arrange(.data$date)
 
   # Calculate CAAQS attainment where data provided
-  thresholds <- CAAQS_thesholds()
+  thresholds <- CAAQS_thresholds()
   list(
     pm25 = if (!is.null(pm25_1hr_ugm3)) CAAQS_pm25(obs, thresholds),
     o3 = if (!is.null(o3_1hr_ppb)) CAAQS_o3(obs, thresholds),
@@ -359,7 +372,14 @@ CAAQS_meets_standard <- function(year, metric, thresholds) {
   return(attainment)
 }
 
-CAAQS_thesholds <- function() {
+# Current as of 2025-08 (CCME air quality report, https://ccme.ca/en/air-quality-report).
+# Threshold values are the Red management level (= the CAAQS itself, with the
+# effective year as the list name); Yellow/Orange use a 0.01 offset to emulate
+# right-open (inclusive-Red) bins with strict > comparisons in
+# CAAQS_meets_standard(). The CAAQS O3 metric is defined in the CCME Guidance
+# Document on Achievement Determination for Ozone (2021): 3-year average of the
+# annual 4th-highest daily maximum 8-hour rolling average.
+CAAQS_thresholds <- function() {
   list(
     pm25 = list(
       daily = list(

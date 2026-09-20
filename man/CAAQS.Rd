@@ -35,6 +35,15 @@ Standards at various averaging periods are defined for fine particulate matter (
 
 Management levels (Green -> Yellow -> Orange -> Red) are defined for each pollutant standard.
 A "Red" level indicates exceedance of the CAAQS and management plans are typically developed for regions at "Orange" or worse levels.
+
+Metrics follow the CCME Guidance Documents on Achievement Determination:
+the O3 metric is the 3-year average of the annual 4th-highest daily maximum
+8-hour rolling average; the NO2 (SO2) hourly metric is the 3-year average of
+the annual 98th (99th) percentile of daily maximum 1-hour concentrations;
+annual metrics are annual means of hourly concentrations; and the PM2.5
+metrics are the 3-year average of the annual 98th percentile of daily means
+and the 3-year average of annual means. Datetimes are assumed to be in
+local standard time.
 }
 \examples{
 obs <- data.frame(
@@ -51,7 +60,10 @@ CAAQS(
 )
 }
 \references{
-\url{https://ccme.ca/en/air-quality-report}
+\itemize{
+\item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+}
 }
 \seealso{
 Other Air Quality Standards: 
