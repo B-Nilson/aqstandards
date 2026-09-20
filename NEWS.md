@@ -158,6 +158,21 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   56.01 and 50.01). Appendix 2 also mandates the rounding above: "the
   metric values for comparison to the concentrations must be rounded to
   the same number of digits as the shown concentrations".
+- Documented the CAAQS methodology in the README (per-pollutant metric
+  definitions, completeness criteria, exceptions and sources, replacing
+  that section's TODO placeholder) and made the README and `CAAQS()`
+  examples deterministic (exact inputs instead of unseeded `sample()`).
+  Added `data-raw/CAAQS-regression-fixtures.R`, whose execution writes
+  `data-raw/CAAQS-regression-fixtures.md`: a catalogue of 18
+  deterministic rule-level fixtures (minimal synthetic inputs with exact
+  values and dates, plus expected outputs computed by running the
+  package) covering every implemented rule - daily/annual/quarterly
+  gates, the O3 season, daily-row and annual-row exceptions, the
+  relaxed 50%-per-quarter path, the 2-of-3 metric rule, GDAD percentile
+  ranking, rounding cascades, cross-midnight window attribution and
+  band-edge classification - each marked as GDAD-derived or
+  current-behaviour-pinning, for the planned regression-test issue;
+  re-running the generator reproduces the document byte-for-byte.
 
 ## AQHI+
 

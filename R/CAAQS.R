@@ -65,14 +65,28 @@
 #' @importFrom rlang .data
 #'
 #' @examples
-#' obs <- data.frame(
-#'   date = seq(
-#'     lubridate::ymd_h("2020-01-01 00"),
-#'     lubridate::ymd_h("2023-12-31 23"), "1 hours"
-#'   ),
-#'   pm25 = sample(1:150, 35064, TRUE), o3 = sample(1:150, 35064, TRUE),
-#'   no2 = sample(1:150, 35064, TRUE), so2 = sample(1:150, 35064, TRUE)
+#' # Three years of hourly data: a constant background with a handful of
+#' # elevated O3 plateau days. Every input is exact (no random generation),
+#' # so the output is reproducible. data-raw/CAAQS-regression-fixtures.R
+#' # holds a catalogue of rule-specific scenarios.
+#' hours <- seq(
+#'   lubridate::ymd_h("2021-01-01 00"),
+#'   lubridate::ymd_h("2023-12-31 23"), "1 hours"
 #' )
+#' obs <- data.frame(
+#'   date = hours,
+#'   pm25 = rep(10, length(hours)),
+#'   o3 = rep(30, length(hours)),
+#'   no2 = rep(10, length(hours)),
+#'   so2 = rep(1, length(hours))
+#' )
+#' for (day in paste0(rep(2021:2023, each = 4),
+#'                    c("-06-10", "-06-20", "-07-10", "-07-20"))) {
+#'   obs$o3[obs$date %in% seq(
+#'     lubridate::ymd_h(paste(day, "09")),
+#'     lubridate::ymd_h(paste(day, "16")), "1 hours"
+#'   )] <- 70
+#' }
 #' CAAQS(
 #'   dates = obs$date, pm25_1hr_ugm3 = obs$pm25,
 #'   o3_1hr_ppb = obs$o3, no2_1hr_ppb = obs$no2, so2_1hr_ppb = obs$so2

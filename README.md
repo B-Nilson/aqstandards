@@ -39,18 +39,61 @@ remotes::install_github("B-Nilson/aqstandards")
 
 ## Canadian Ambient Air Quality Standards (CAAQS)
 
-<!-- TODO: add writeup on standard -->
+`CAAQS()` assesses hourly observations against the Canadian Ambient Air
+Quality Standards: for each pollutant it derives the annual metric values
+defined by the CCME guidance documents, averages them over 3-year windows,
+and classifies the resulting metric values against the standards and the
+management-level bands of the Air Zone Management guidance.
+
+- **O3** — daily maximum of the 8-hour rolling mean (each window is
+  attributed to the ending hour it labels, eq. 5.1 of the Ozone GDAD);
+  annual metric = 4th-highest daily maximum over April 1 – September 30;
+  standard 63 ppb (2015), 62 (2020), 60 (2025).
+- **NO2** — annual metric = mean of hourly values, standard 17 ppb (2020),
+  12 (2025); 1-hour metric = 98th percentile of daily maxima, 60 ppb
+  (2020), 42 (2025).
+- **SO2** — annual metric = mean of hourly values, standard 5 ppb (2020),
+  4 (2025); 1-hour metric = 99th percentile of daily maxima, 70 ppb (2020),
+  65 (2025).
+- **PM2.5** — daily metric = 98th percentile of daily 24-hour means,
+  standard 28 µg/m³ (2015), 27 (2020); annual metric = mean of daily means,
+  10.0 µg/m³ (2015), 8.8 (2020).
+
+Metric values are computed only for years (and 3-year windows) meeting the
+data-completeness criteria of each guidance document's Table 5-3 — at least
+18 of 24 valid hours per day, 75% of days in the year and 60% in every
+calendar quarter, the April–September season for O3 — with the documents'
+exceptions retaining deficient days or gated-out years whose values exceed
+the standard. Percentiles use the GDAD ranking approach (K-th highest, no
+interpolation), values are rounded per each GDAD before comparison with the
+standards, and a 3-year metric value requires at least two of the three
+annual values.
+
+Sources: CCME Guidance Documents on Achievement Determination (Ozone 2021;
+NO2 and SO2 2020; PM2.5 2012, PN 1483) and the Guidance Document on Air
+Zone Management (2019, Appendix 2).
 
 ``` r
 library(aqstandards)
-obs <- data.frame(
-  date = seq(
-    lubridate::ymd_h("2020-01-01 00"),
-    lubridate::ymd_h("2023-12-31 23"), "1 hours"
-  ),
-  pm25 = sample(1:150, 35064, TRUE), o3 = sample(1:150, 35064, TRUE),
-  no2 = sample(1:150, 35064, TRUE), so2 = sample(1:150, 35064, TRUE)
+hours <- seq(
+  lubridate::ymd_h("2021-01-01 00"),
+  lubridate::ymd_h("2023-12-31 23"), "1 hours"
 )
+obs <- data.frame(
+  date = hours,
+  pm25 = rep(10, length(hours)),
+  o3 = rep(30, length(hours)),
+  no2 = rep(10, length(hours)),
+  so2 = rep(1, length(hours))
+)
+# a few elevated O3 plateau days each summer
+for (day in paste0(rep(2021:2023, each = 4),
+                   c("-06-10", "-06-20", "-07-10", "-07-20"))) {
+  obs$o3[obs$date %in% seq(
+    lubridate::ymd_h(paste(day, "09")),
+    lubridate::ymd_h(paste(day, "16")), "1 hours"
+  )] <- 70
+}
 CAAQS(
   dates = obs$date, 
   pm25_1hr_ugm3 = obs$pm25,
