@@ -38,8 +38,15 @@
 #' gated-out year's annual metric is computed from all available data), and
 #' the NO2/SO2 annual-mean metric accepts the relaxed 50%-per-calendar-
 #' quarter criterion of its Table 5-3 annual row when the annual average
-#' exceeds the standard. Hourly datetimes are assumed to label the start of
-#' the averaging hour and to be in local standard time.
+#' exceeds the standard. Metric values are rounded per the GDADs'
+#' decimal-place and rounding rules (Table 5-4 of the Ozone, NO2 and SO2
+#' GDADs; Appendix D of the PM2.5 GDAD) before comparison to a standard or
+#' management level, as the Guidance Document on Air Zone Management
+#' (2019, Appendix 2) requires, and management levels are assigned with
+#' that document's inclusive band edges (Red is strict `>`, the Orange and
+#' Yellow lower edges inclusive, Green below the Yellow edge). Hourly
+#' datetimes are assumed to label the start of the averaging hour and to
+#' be in local standard time.
 #'
 #' @references
 #' \itemize{
@@ -48,6 +55,7 @@
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
 #'   \item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
+#'   \item CCME, Guidance Document on Air Zone Management (2019), \url{https://ccme.ca/en/res/guidancedocumentonairzonemanagement_secured.pdf}
 #' }
 #' @family Canadian Air Quality
 #' @family Air Quality Standards
@@ -514,7 +522,13 @@ CAAQS_pm25 <- function(obs, thresholds) {
     ) |>
     dplyr::summarise(
       .groups = "drop",
-      pm25_mean = .data$pm25 |> mean(na.rm = TRUE),
+      # The daily 24hr-PM2.5 is "the daily 24-hour average concentration
+      # (in ug/m3) rounded to one decimal place using the procedures
+      # specified in Appendix D" (PM2.5 GDAD section 4.1.1); the annual
+      # average and metric values are rounded per Appendix D as well
+      # (CAAQS_round_gdad()).
+      pm25_mean = .data$pm25 |> mean(na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$pm25$daily),
       daily_avail_hours = sum(!is.na(.data$pm25))
     ) |>
     dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$pm25$min_hours_of_day) |>
@@ -532,7 +546,10 @@ CAAQS_pm25 <- function(obs, thresholds) {
         CAAQS_rank_percentile(0.98),
       # Annual average per section 4.2.2 (Equation 3): the mean of the
       # valid daily-24hr-PM2.5 values in the year.
-      mean_of_daily_means = mean(.data$pm25_mean, na.rm = TRUE)
+      # "The annual average is to be rounded to one decimal place based on
+      # the procedure specified in Appendix D" (PM2.5 GDAD section 4.2.2).
+      mean_of_daily_means = mean(.data$pm25_mean, na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$pm25$annual)
     ) |>
     # The year-level completeness gates (sections 4.1.4/4.2.4) decide
     # whether the year's metric values are valid; with no exceptions column
@@ -550,10 +567,13 @@ CAAQS_pm25 <- function(obs, thresholds) {
     # 4.2.4 a metric value is valid when its annual values (98P or annual
     # average) "are available for at least two of the required three years".
     dplyr::mutate(
+      # Metric values are rounded to one decimal place per Appendix D
+      # (PM2.5 GDAD sections 4.1.3 and 4.2.3).
       `3yr_mean_of_perc_98` = .data$perc_98_of_daily_means |>
         handyr::rolling(
           "mean", .width = 3, .direction = "backward", .min_non_na = 2
-        ),
+        ) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$pm25$`3yr`),
       management_level_daily = .data$year |>
         sapply(
           \(y) {
@@ -567,7 +587,8 @@ CAAQS_pm25 <- function(obs, thresholds) {
       `3yr_mean_of_means` = .data$mean_of_daily_means |>
         handyr::rolling(
           "mean", .width = 3, .direction = "backward", .min_non_na = 2
-        ),
+        ) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$pm25$`3yr`),
       management_level_annual = .data$year |>
         sapply(
           \(y) {
@@ -630,7 +651,12 @@ CAAQS_o3 <- function(obs, thresholds) {
     # completeness criterion was not satisfied").
     dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
     dplyr::summarise(
-      daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE),
+      # The O3-8-hr and, directly obtained from it, the O3 Dmax 8-hour are
+      # reported to one decimal place (Ozone GDAD 2021 Table 5-4); the
+      # rounding commutes with the maximum, so rounding the daily maximum
+      # here covers the rolling averages it is taken over.
+      daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$o3$annual),
       valid_windows = sum(!is.na(.data$`8hr_mean_o3`)),
       .groups = "drop"
     ) |>
@@ -689,10 +715,14 @@ CAAQS_o3 <- function(obs, thresholds) {
     # metric value may be based on two of the possible three annual fourth
     # highest, so a 3-year window needs at least 2 available years.
     dplyr::mutate(
+      # The metric value is reported as a whole number via the GDAD two-step
+      # procedure (Ozone GDAD 2021 Table 5-4; worked example in Text Box 2:
+      # 62.966... ppb -> 62.9 ppb -> 63 ppb).
       `3yr_mean` = .data$fourth_highest_daily_max_8hr_mean_o3 |>
         handyr::rolling(
           "mean", .width = 3, .direction = "backward", .min_non_na = 2
-        ),
+        ) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$o3$`3yr`),
       management_level_8hr = .data$year |>
         sapply(
           \(y) {
@@ -726,7 +756,13 @@ CAAQS_no2 <- function(obs, thresholds) {
     # + annual mean
     dplyr::ungroup() |>
     dplyr::group_by(year = .data$date |> lubridate::year()) |>
-    dplyr::mutate(annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE)) |>
+    # The annual metric value is reported to one decimal place (NO2 GDAD
+    # 2020 Table 5-4: "Annual metric value (annual average of the NO2 1-
+    # hour) ... One decimal place"); the SO2 rule is identical.
+    dplyr::mutate(
+      annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$no2$annual)
+    ) |>
     # hourly mean -> daily maxima, keeping only days meeting the daily
     # completeness criterion. Table 5-3 (NO2 Dmax 1-hour): "At least 18 of
     # the 24 (75%) NO2 1-hour are available in the day", with the column-3
@@ -740,7 +776,11 @@ CAAQS_no2 <- function(obs, thresholds) {
     ) |>
     dplyr::summarise(
       .groups = "drop",
-      daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE),
+      # The NO2 Dmax 1-hour is reported to one decimal place (NO2 GDAD 2020
+      # Table 5-4 footnote: "directly obtained from the NO2 1-hour"); the
+      # rounding commutes with the ranking used for the 98th percentile.
+      daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$no2$annual),
       daily_avail_hours = sum(!is.na(.data$no2))
     ) |>
     dplyr::filter(
@@ -810,10 +850,14 @@ CAAQS_no2 <- function(obs, thresholds) {
     # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
     # the possible three annual 98th percentiles.
     dplyr::mutate(
+      # The 1-hour metric value is reported as a whole number via the GDAD
+      # two-step procedure (NO2 GDAD 2020 Table 5-4; worked example in
+      # Text Box 3: 62.966... ppb -> 62.9 ppb -> 63 ppb).
       `3yr_mean_of_perc_98` = .data$perc_98_of_daily_maxima |>
         handyr::rolling(
           "mean", .width = 3, .direction = "backward", .min_non_na = 2
-        ),
+        ) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$no2$`3yr`),
       # The hourly CAAQS metric is the 3-year average of the annual 98th
       # percentile of daily maximum 1-hour concentrations; the annual CAAQS
       # metric is the annual mean of 1-hour concentrations.
@@ -876,7 +920,11 @@ CAAQS_so2 <- function(obs, thresholds) {
     ) |>
     dplyr::summarise(
       .groups = "drop",
-      daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE),
+      # The SO2 Dmax 1-hour is reported to one decimal place (SO2 GDAD 2020
+      # Table 5-4 footnote: "directly obtained from the SO2 1-hour"); the
+      # rounding commutes with the ranking used for the 99th percentile.
+      daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$so2$annual),
       daily_avail_hours = sum(!is.na(.data$so2))
     ) |>
     dplyr::filter(
@@ -945,10 +993,13 @@ CAAQS_so2 <- function(obs, thresholds) {
     # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
     # the possible three annual 99th percentiles.
     dplyr::mutate(
+      # The 1-hour metric value is reported as a whole number via the GDAD
+      # two-step procedure (SO2 GDAD 2020 Table 5-4), as for NO2.
       `3yr_mean_of_perc_99` = .data$perc_99_of_daily_maxima |>
         handyr::rolling(
           "mean", .width = 3, .direction = "backward", .min_non_na = 2
-        ),
+        ) |>
+        CAAQS_round_gdad(CAAQS_metric_digits$so2$`3yr`),
       # The hourly CAAQS metric is the 3-year average of the annual 99th
       # percentile of daily maximum 1-hour concentrations; the annual CAAQS
       # metric is the annual mean of 1-hour concentrations.
@@ -998,6 +1049,44 @@ CAAQS_rank_percentile <- function(x, p) {
   k <- n - floor(n * p + 1e-9)
   sort(x, decreasing = TRUE)[k]
 }
+
+## Decimal-place and rounding rules of the CCME Guidance Documents on
+## Achievement Determination, applied before any comparison to a standard
+## or management level. Each GDAD reports its metric values at a fixed
+## number of decimal places (Ozone GDAD 2021 Table 5-4; NO2 and SO2 GDADs
+## 2020 Table 5-4; PM2.5 GDAD 2012, PN 1483, Appendix D and sections
+## 4.1.3, 4.2.2 and 4.2.3), and the Guidance Document on Air Zone
+## Management (2019) requires that "the metric values for comparison to
+## the concentrations must be rounded to the same number of digits as the
+## shown concentrations" (Appendix 2, Tables A2-1 to A2-4). The GDADs'
+## rounding is half-up: the O3/NO2/SO2 two-step procedure ("first discard
+## all numbers after the first decimal ... if its decimal is 5, round
+## upward; 4, round downward") and PM2.5's one-step convention ("numbers
+## with first decimal .5 will be rounded upward; < .5 ... downward") both
+## round upward exactly when the first discarded digit is 5 or more. The
+## Ozone GDAD's worked example (Text Box 2: 3-year average 62.966... ppb
+## becomes 62.9 ppb, which "is rounded upward 63 ppb, which is the
+## calculated ozone CAAQS metric value") is reproduced by this helper.
+## R's round() cannot be used because it rounds half to even (round(0.5)
+## is 0 and round(0.15, 1) is 0.1).
+CAAQS_round_gdad <- function(x, digits) {
+  scale <- 10^digits
+  ifelse(x >= 0, floor(x * scale + 0.5), -floor(-x * scale + 0.5)) / scale
+}
+
+## Reporting precision of each metric per the GDAD decimal-place tables
+## (sources in CAAQS_round_gdad()): one decimal place for values "directly
+## obtained from" reported concentrations (the daily maxima and annual
+## percentiles of O3, NO2 and SO2; the PM2.5 daily 24-hr means and annual
+## averages) and for the PM2.5 metric values; whole numbers for the O3
+## metric value and the NO2/SO2 1-hour metric values (the 3-year averages
+## of the percentile-type annual values).
+CAAQS_metric_digits <- list(
+  o3 = list(annual = 1L, `3yr` = 0L),
+  no2 = list(annual = 1L, `3yr` = 0L),
+  so2 = list(annual = 1L, `3yr` = 0L),
+  pm25 = list(daily = 1L, annual = 1L, `3yr` = 1L)
+)
 
 ## Annual-row exceptions criteria of the GDADs' data-completeness tables
 ## (Table 5-3 column 3; see CAAQS_completeness() for the quoted rows),
@@ -1052,27 +1141,38 @@ CAAQS_meets_standard <- function(year, metric, thresholds) {
   if (length(mgmt_levels) == 0) {
     return(NA)
   }
-  # Calculate CAAQS attainment
-  attainment <- mgmt_levels |>
-    handyr::for_each(
-      .as_list = TRUE,
-      .bind = TRUE,
-      .show_progress = FALSE,
-      \(lvl) metric > lvl
-    )
-  attainment <- attainment |>
-    apply(1, \(x) handyr::min(which(x), na.rm = TRUE))
-  attainment[!is.na(attainment)] <- names(mgmt_levels)[
-    attainment[!is.na(attainment)]
-  ]
+  # Management levels per the Guidance Document on Air Zone Management
+  # (2019) Appendix 2: Red is "greater than" the CAAQS (the achievement
+  # determination GDADs' "less than or equal to" rule, so the Red edge is
+  # exclusive), the Orange/Yellow lower edges are inclusive ("32 to 60
+  # ppb" in the tables), and Green collects everything below the Yellow
+  # lower edge ("< 50 ppb").
+  red <- unname(mgmt_levels[["Red"]])
+  band_edges <- mgmt_levels[c("Orange", "Yellow")]
+  attainment <- rep(NA_character_, length(metric))
+  attainment[!is.na(metric) & metric > red] <- "Red"
+  for (lvl in names(band_edges)) {
+    unclassified <- is.na(attainment)
+    attainment[unclassified & metric >= band_edges[[lvl]]] <- lvl
+  }
+  attainment[is.na(attainment) & !is.na(metric)] <- "Green"
   return(attainment)
 }
 
 # Current as of 2025-08 (CCME air quality report, https://ccme.ca/en/air-quality-report).
-# Threshold values are the Red management level (= the CAAQS itself, with the
-# effective year as the list name); Yellow/Orange use a 0.01 offset to emulate
-# right-open (inclusive-Red) bins with strict > comparisons in
-# CAAQS_meets_standard(). The CAAQS O3 metric is defined in the CCME Guidance
+# Threshold values are the management-level band edges of the CCME Guidance
+# Document on Air Zone Management (2019), Appendix 2 (Tables A2-1 to A2-4),
+# with the effective year as the list name: Red is the CAAQS itself, the
+# Orange and Yellow values are the inclusive lower edges shown there ("32 to
+# 60 ppb", "21 to 31 ppb", ...), and Green is everything below the Yellow
+# lower edge ("< 50 ppb" in the tables). CAAQS_meets_standard() applies the
+# comparison semantics the guidance documents state: a CAAQS "is achieved if
+# the metric value is less than or equal to the standard" (achievement
+# determination GDADs), i.e. Red is strict >, and the band lower edges are
+# inclusive. Metric values are rounded per the GDADs (CAAQS_round_gdad())
+# before comparison, as Appendix 2 requires ("the metric values for
+# comparison to the concentrations must be rounded to the same number of
+# digits as the shown concentrations"). The CAAQS O3 metric is defined in the CCME Guidance
 # Document on Achievement Determination for Ozone (2021): 3-year average of the
 # annual 4th-highest daily maximum 8-hour rolling average. The CAAQS PM2.5
 # metrics are defined in the CCME Guidance Document on Achievement
@@ -1084,39 +1184,39 @@ CAAQS_thresholds <- function() {
   list(
     pm25 = list(
       daily = list(
-        "2015" = c(Red = 28, Orange = 19, Yellow = 10.01, Green = 0),
-        "2020" = c(Red = 27, Orange = 19, Yellow = 10.01, Green = 0)
+        "2015" = c(Red = 28, Orange = 20, Yellow = 11, Green = 0),
+        "2020" = c(Red = 27, Orange = 20, Yellow = 11, Green = 0)
       ),
       annual = list(
-        "2015" = c(Red = 10, Orange = 6.41, Yellow = 4.01, Green = 0),
-        "2020" = c(Red = 8.8, Orange = 6.41, Yellow = 4.01, Green = 0)
+        "2015" = c(Red = 10, Orange = 6.5, Yellow = 4.1, Green = 0),
+        "2020" = c(Red = 8.8, Orange = 6.5, Yellow = 4.1, Green = 0)
       )
     ),
     o3 = list(
       `8hr` = list(
-        "2015" = c(Red = 63, Orange = 56.01, Yellow = 50.01, Green = 0),
-        "2020" = c(Red = 62, Orange = 56.01, Yellow = 50.01, Green = 0),
-        "2025" = c(Red = 60, Orange = 56.01, Yellow = 50.01, Green = 0)
+        "2015" = c(Red = 63, Orange = 57, Yellow = 51, Green = 0),
+        "2020" = c(Red = 62, Orange = 57, Yellow = 51, Green = 0),
+        "2025" = c(Red = 60, Orange = 57, Yellow = 51, Green = 0)
       )
     ),
     no2 = list(
       hourly = list(
-        "2020" = c(Red = 60, Orange = 31.01, Yellow = 20.01, Green = 0),
-        "2025" = c(Red = 42, Orange = 31.01, Yellow = 20.01, Green = 0)
+        "2020" = c(Red = 60, Orange = 32, Yellow = 21, Green = 0),
+        "2025" = c(Red = 42, Orange = 32, Yellow = 21, Green = 0)
       ),
       annual = list(
-        "2020" = c(Red = 17, Orange = 7.01, Yellow = 2.01, Green = 0),
-        "2025" = c(Red = 12, Orange = 7.01, Yellow = 2.01, Green = 0)
+        "2020" = c(Red = 17, Orange = 7.1, Yellow = 2.1, Green = 0),
+        "2025" = c(Red = 12, Orange = 7.1, Yellow = 2.1, Green = 0)
       )
     ),
     so2 = list(
       hourly = list(
-        "2020" = c(Red = 70, Orange = 50.01, Yellow = 30.01, Green = 0),
-        "2025" = c(Red = 65, Orange = 50.01, Yellow = 30.01, Green = 0)
+        "2020" = c(Red = 70, Orange = 51, Yellow = 31, Green = 0),
+        "2025" = c(Red = 65, Orange = 51, Yellow = 31, Green = 0)
       ),
       annual = list(
-        "2020" = c(Red = 5, Orange = 3.01, Yellow = 2.01, Green = 0),
-        "2025" = c(Red = 4, Orange = 3.01, Yellow = 2.01, Green = 0)
+        "2020" = c(Red = 5, Orange = 3.1, Yellow = 2.1, Green = 0),
+        "2025" = c(Red = 4, Orange = 3.1, Yellow = 2.1, Green = 0)
       )
     )
   )

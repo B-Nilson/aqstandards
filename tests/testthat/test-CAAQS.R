@@ -109,13 +109,16 @@ test_that("O3 8-hour windows are attributed to their ending hour per the GDAD", 
 
   output <- CAAQS(dates = hours, o3_1hr_ppb = o3)$o3
 
+  # The daily max 8-hour average is reported to one decimal place (Ozone
+  # GDAD 2021 Table 5-4): 88.75 rounds half-up to 88.8.
   expect_identical(
     output$fourth_highest_daily_max_8hr_mean_o3,
-    c(10, 88.75, 10, 10)
+    c(10, 88.8, 10, 10)
   )
   expect_identical(
-    output$`3yr_mean`,
-    c(NA, NA, (10 + 88.75 + 10) / 3, (88.75 + 10 + 10) / 3)
+    output$`3yr_mean`,    # The metric value is reported as a whole number (Table 5-4):
+    # (10 + 88.8 + 10)/3 = 36.266... rounds to 36.
+    c(NA, NA, 36, 36)
   )
 })
 
@@ -136,8 +139,9 @@ test_that("NO2 hourly management level uses the 98th percentile metric, annual u
 
   output <- CAAQS(dates = hours, no2_1hr_ppb = no2)$no2
 
-  expect_gt(min(output$annual_mean_of_hourly), 5)
-  expect_lt(max(output$annual_mean_of_hourly), 5.1)
+  # The annual metric value is reported to one decimal place (NO2 GDAD
+  # 2020 Table 5-4): 5.0867... rounds half-up to 5.1.
+  expect_identical(unique(output$annual_mean_of_hourly), 5.1)
   expect_equal(
     output$`3yr_mean_of_perc_98`,
     c(NA_real_, NA_real_, 100, 100, 100)
@@ -677,10 +681,12 @@ test_that("a gated-out year with an exceeding 98th percentile is retained per th
   out <- CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
   expect_identical(out$year, c(2021, 2022, 2023))
   expect_identical(out$perc_98_of_daily_maxima, c(100, 100, 100))
-  # 8 spike hours per year lift the complete years' mean to 5 + 95 * 8/8760.
+  # 8 spike hours per year lift the complete years' mean to
+  # 5 + 95 * 8/8760 = 5.0867..., reported to one decimal place per
+  # the NO2 GDAD Table 5-4 rounding: 5.1.
   expect_equal(
     out$annual_mean_of_hourly,
-    c(NA_real_, rep(5 + 95 * 8 / 8760, 2))
+    c(NA_real_, 5.1, 5.1)
   )
 })
 
@@ -742,6 +748,108 @@ test_that("CAAQS_completeness flags which pollutants carry annual-row exceptions
   # exceptions column at all.
   expect_false(comp$pm25$annual_metric_exception)
   expect_false(comp$pm25$annual_mean_exception)
+})
+
+test_that("CAAQS_round_gdad implements the GDAD half-up rounding", {
+  # Half rounds upward, below-half downward (PM2.5 GDAD Appendix D:
+  # "10.557 rounded to a whole number becomes 11, and 10.459 becomes 10").
+  expect_equal(CAAQS_round_gdad(c(10.5, 10.4, 10.557, 10.459), 0), c(11, 10, 11, 10))
+  # To one decimal place (Appendix D: "10.557 ... becomes 10.6, and 10.449
+  # becomes 10.4").
+  expect_equal(CAAQS_round_gdad(c(10.557, 10.449, 10.45), 1), c(10.6, 10.4, 10.5))
+  # R is not used directly because it rounds half to even.
+  expect_equal(CAAQS_round_gdad(c(0.5, 2.5, 0.15, 0.25), 0), c(1, 3, 0, 0))
+  expect_equal(CAAQS_round_gdad(0.25, 1), 0.3)
+  # Negative values round half away from zero.
+  expect_equal(CAAQS_round_gdad(c(-0.5, -1.5, -0.15), 0), c(-1, -2, 0))
+  expect_equal(CAAQS_round_gdad(-0.15, 1), -0.2)
+  # NA stays NA.
+  expect_true(is.na(CAAQS_round_gdad(NA_real_, 0)))
+})
+
+test_that("metric values are rounded per the GDAD decimal-place rules before reporting", {
+  # Ozone GDAD 2021 Text Box 2: annual fourth highest of 72.5, 60.5 and
+  # 55.9 ppb -> 3-year average 62.966... -> "62.9 ppb is rounded upward 63
+  # ppb, which is the calculated ozone CAAQS metric value". Each year gets
+  # exactly four plateau days at its target value over a low background, so
+  # the fourth highest is the target; the daily max 8-hour average is
+  # reported to one decimal place (Table 5-4).
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  o3 <- rep(10, length(hours))
+  for (year in 2021:2023) {
+    target <- c("2021" = 72.5, "2022" = 60.5, "2023" = 55.9)[[as.character(year)]]
+    for (day in c("06-10", "06-20", "07-10", "07-20")) {
+      o3[hours %in% make_hours(
+        paste0(year, "-", day, " 09"), paste0(year, "-", day, " 16")
+      )] <- target
+    }
+  }
+  out <- CAAQS_o3(data.frame(date = hours, o3 = o3), CAAQS_thresholds())
+  expect_equal(out$fourth_highest_daily_max_8hr_mean_o3, c(72.5, 60.5, 55.9))
+  expect_equal(out$`3yr_mean`, c(NA_real_, NA_real_, 63))
+
+  # PM2.5 GDAD Appendix D rounds in one step: the 3-year average of the
+  # annual means (20.1 + 20.1 + 20.2) / 3 = 20.133... has second decimal
+  # 3 (< .05), so it is reported as 20.1. The daily means and annual
+  # averages are reported to one decimal place as well (sections 4.1.1
+  # and 4.2.2).
+  hours_pm <- make_hours("2021-01-01 00", "2023-12-31 23")
+  pm25 <- rep(20.1, length(hours_pm))
+  pm25[hours_pm >= lubridate::ymd_h("2023-01-01 00")] <- 20.2
+  out_pm <- CAAQS_pm25(
+    data.frame(date = hours_pm, pm25 = pm25), CAAQS_thresholds()
+  )
+  expect_equal(out_pm$mean_of_daily_means, c(20.1, 20.1, 20.2))
+  expect_equal(out_pm$`3yr_mean_of_means`, c(NA_real_, NA_real_, 20.1))
+})
+
+test_that("a metric at a band edge classifies per the Air Zone Management tables", {
+  # 2020-2024 O3 (Red > 62, Orange 57 to 62, Yellow 51 to 56, Green < 50;
+  # Appendix 2 Table A2-1): the edge values classify Orange, not Red or
+  # Yellow. Year values arrive already rounded per the Ozone GDAD (whole
+  # numbers), so the edges are reachable exactly.
+  expect_equal(
+    CAAQS_meets_standard(2022, 62, CAAQS_thresholds()$o3$`8hr`), "Orange"
+  )
+  expect_equal(
+    CAAQS_meets_standard(2022, 62.00001, CAAQS_thresholds()$o3$`8hr`), "Red"
+  )
+  expect_equal(
+    CAAQS_meets_standard(2022, 57, CAAQS_thresholds()$o3$`8hr`), "Orange"
+  )
+  expect_equal(
+    CAAQS_meets_standard(2022, 56.9, CAAQS_thresholds()$o3$`8hr`), "Yellow"
+  )
+  expect_equal(
+    CAAQS_meets_standard(2022, 51, CAAQS_thresholds()$o3$`8hr`), "Yellow"
+  )
+  expect_equal(
+    CAAQS_meets_standard(2022, 50.9, CAAQS_thresholds()$o3$`8hr`), "Green"
+  )
+})
+
+test_that("band classification no longer depends on the 0.01 offset emulation", {
+  # Previously the threshold table stored Yellow/Orange edges offset by
+  # 0.01 (Yellow = 50.01 for O3) to emulate inclusive lower edges with
+  # strict >; with the sourced edges and inclusive comparisons those
+  # historical values are exactly the class boundaries. These would have
+  # misclassified under the old scheme only for unrounded metrics; the
+  # point here is that the table carries the CCME's actual values.
+  th <- CAAQS_thresholds()
+  # Values are the CCME's own band edges; the offsets are gone.
+  expect_identical(
+    unname(th$o3$`8hr`$"2020"), c(62, 57, 51, 0)
+  )
+  expect_identical(
+    names(th$o3$`8hr`$"2020"), c("Red", "Orange", "Yellow", "Green")
+  )
+  expect_identical(unname(th$no2$hourly$"2025"), c(42, 32, 21, 0))
+  expect_identical(unname(th$pm25$daily$"2020"), c(27, 20, 11, 0))
+  expect_identical(unname(th$so2$annual$"2025"), c(4, 3.1, 2.1, 0))
+  # And a value that the offset scheme would have placed differently at
+  # the edge now classifies from the sourced edges directly.
+  expect_equal(CAAQS_meets_standard(2020, 51, th$o3$`8hr`), "Yellow")
+  expect_equal(CAAQS_meets_standard(2020, 50.99, th$o3$`8hr`), "Green")
 })
 
 test_that("min_completeness is retired: all pollutants follow the GDAD gates", {

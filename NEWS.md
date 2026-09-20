@@ -53,8 +53,6 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   the function help and on the threshold table. Interpretation choice:
   hourly input timestamps are treated as labelling the start of the
   averaging hour (so hour-ending values map directly onto hourly rows).
-  The GDADs' remaining rounding rules (decimal places and rounding of
-  metric values before comparison) are not yet covered.
 - Data completeness is now assessed with the pollutant-specific criteria
   of the guidance documents (Table 5-3 of each GDAD) instead of the
   former uniform annual 50% hourly-availability heuristic. Annual metric
@@ -131,6 +129,35 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
 - Fixed an error when the data span non-consecutive years: a year absent
   from the data (for example 2022 in a 2021-2024 series) no longer
   propagates NA through the three-consecutive-years completeness check.
+- Metric values are now rounded per the GDADs' decimal-place and rounding
+  rules before comparison to a standard or management level (Ozone GDAD
+  2021 Table 5-4; NO2 and SO2 GDADs 2020 Table 5-4; PM2.5 GDAD 2012, PN
+  1483, Appendix D with sections 4.1.1, 4.1.3, 4.2.2 and 4.2.3): one
+  decimal place for the daily maxima and annual percentiles of O3, NO2
+  and SO2 and for PM2.5's daily means, annual averages and metric
+  values; whole numbers for the O3 metric value and the NO2/SO2 1-hour
+  metric values. The rounding is half-up (the GDADs' two-step
+  "discard-then-round" procedure and PM2.5's Appendix D convention both
+  round upward exactly when the first discarded digit is 5 or more; the
+  Ozone GDAD's worked example, 3-year average 62.966... ppb reported as
+  63 ppb, is reproduced end-to-end). This is a user-visible behaviour
+  change: reported metric values now carry their GDAD-specified
+  precision, and values previously compared unrounded can classify
+  differently at band boundaries.
+- Management levels are now assigned with the real band edges of the
+  CCME Guidance Document on Air Zone Management (2019, Appendix 2,
+  Tables A2-1 to A2-4) and its comparison semantics: Red is strict `>`
+  (the achievement determination GDADs' "less than or equal to the
+  standard" rule), the Orange and Yellow lower edges are inclusive
+  ("32 to 60 ppb", "21 to 31 ppb", ...), and Green is everything below
+  the Yellow lower edge. The threshold table no longer stores Yellow
+  and Orange values offset by 0.01 to emulate inclusive edges with
+  strict `>` comparisons: with GDAD-rounded metrics the two schemes
+  agree on every reachable value, and the table now carries the CCME's
+  own numbers (for example O3 2020 Orange 57 and Yellow 51 instead of
+  56.01 and 50.01). Appendix 2 also mandates the rounding above: "the
+  metric values for comparison to the concentrations must be rounded to
+  the same number of digits as the shown concentrations".
 
 ## AQHI+
 

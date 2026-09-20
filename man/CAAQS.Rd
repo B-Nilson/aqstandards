@@ -58,8 +58,15 @@ gated-out year is still retained when its value exceeds the standard (a
 gated-out year's annual metric is computed from all available data), and
 the NO2/SO2 annual-mean metric accepts the relaxed 50\%-per-calendar-
 quarter criterion of its Table 5-3 annual row when the annual average
-exceeds the standard. Hourly datetimes are assumed to label the start of
-the averaging hour and to be in local standard time.
+exceeds the standard. Metric values are rounded per the GDADs'
+decimal-place and rounding rules (Table 5-4 of the Ozone, NO2 and SO2
+GDADs; Appendix D of the PM2.5 GDAD) before comparison to a standard or
+management level, as the Guidance Document on Air Zone Management
+(2019, Appendix 2) requires, and management levels are assigned with
+that document's inclusive band edges (Red is strict \code{>}, the Orange and
+Yellow lower edges inclusive, Green below the Yellow edge). Hourly
+datetimes are assumed to label the start of the averaging hour and to
+be in local standard time.
 }
 \examples{
 obs <- data.frame(
@@ -82,6 +89,7 @@ CAAQS(
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
 \item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
+\item CCME, Guidance Document on Air Zone Management (2019), \url{https://ccme.ca/en/res/guidancedocumentonairzonemanagement_secured.pdf}
 }
 }
 \seealso{
