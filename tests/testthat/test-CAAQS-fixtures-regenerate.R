@@ -9,6 +9,13 @@ test_that("the committed CAAQS fixture specification matches a fresh regeneratio
   # testthat runs with the working directory at tests/testthat; the
   # generator resolves its paths from the package root.
   pkg_root <- normalizePath(test_path("..", ".."))
+  # Installed trees (R CMD INSTALL) and R CMD check do not ship data-raw/,
+  # so the generator is only available in a source checkout. Skip rather
+  # than error there; the enforcement still runs in source mode.
+  skip_if_not(
+    file.exists(file.path(pkg_root, "data-raw", "CAAQS-regression-fixtures.R")),
+    "source checkout only: data-raw/ is not shipped in installed trees"
+  )
   doc <- file.path(pkg_root, "data-raw", "CAAQS-regression-fixtures.md")
   expected <- readLines(doc, warn = FALSE)
 
