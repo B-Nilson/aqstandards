@@ -50,13 +50,41 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   data). This is a user-visible behaviour change; use the most recent
   three complete years to reproduce previous partial-window output.
 - Documented metric provenance and the local standard time assumption in
-  the function help and on the threshold table. Interpretation choices:
+  the function help and on the threshold table. Interpretation choice:
   hourly input timestamps are treated as labelling the start of the
-  averaging hour (so hour-ending values map directly onto hourly rows);
-  the GDADs' remaining completeness and rounding rules (daily 18-of-24
-  gates, 75% annual / 60% quarterly gates, April-September season for
-  O3, and the decimal-place reporting rules) are not yet implemented.
-  The GDAD for PM2.5 was not reviewed in this pass.
+  averaging hour (so hour-ending values map directly onto hourly rows).
+  The GDADs' remaining rounding rules (decimal places and rounding of
+  metric values before comparison) and the PM2.5 GDAD are not yet
+  covered; see the completeness section below.
+- Data completeness is now assessed with the pollutant-specific criteria
+  of the guidance documents (Table 5-3 of each GDAD) instead of the
+  former uniform annual 50% hourly-availability heuristic. Annual metric
+  values are reported only for years in which:
+  - O3: at least 75% of the days from April 1 to September 30 have a
+    valid daily maximum 8-hour rolling average; the annual fourth-highest
+    is ranked only over the April 1 - September 30 season (Ozone GDAD
+    2021, Table 5-3 and section 5.3); and within each day at least 18 of
+    the 24 rolling 8-hour averages were available.
+  - NO2 and SO2: the daily maxima fed to the annual 98th (99th)
+    percentile come only from days with at least 18 of 24 hours
+    available; the year must have valid daily maxima on at least 75% of
+    its days and 60% of the days in each calendar quarter (NO2 GDAD 2020
+    and SO2 GDAD 2020, Table 5-3); and the annual-mean metric additionally
+    requires 75% of hours available in the year and 60% in each quarter.
+  The Table 5-3 exceptions criteria (values that exceed the standard are
+  retained despite missing data) are not implemented: deficient days are
+  dropped, which can only lower a metric value.
+- `min_completeness` now applies only to PM2.5, whose guidance document
+  has not been reviewed; it is ignored for O3, NO2 and SO2, whose gates
+  follow the guidance documents. This is a user-visible behaviour
+  change: years accepted (or rejected) by the old 50% heuristic may now
+  be rejected (or accepted) where the Table 5-3 criteria differ.
+- Hours-per-year requirements are derived from the calendar via
+  lubridate's leap-year rule instead of the previously hardcoded
+  `year %% 4` check, which mishandled century years such as 2100.
+- Fixed an error when the data span non-consecutive years: a year absent
+  from the data (for example 2022 in a 2021-2024 series) no longer
+  propagates NA through the three-consecutive-years completeness check.
 
 ## AQHI+
 

@@ -5,7 +5,11 @@
 #' @param o3_1hr_ppb (Optional). Vector of hourly mean ozone (O3) concentrations (ppb).
 #' @param no2_1hr_ppb (Optional). Vector of hourly mean nitrogen dioxide (NO2) concentrations (ppb).
 #' @param so2_1hr_ppb (Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).
-#' @param min_completeness A single value from 0 to 1 indicating the required annual data completeness for a pollutant. Default is 0.5 (50 percent).
+#' @param min_completeness Deprecated. Data completeness is now assessed with the
+#'   pollutant-specific criteria in the CCME Guidance Documents on Achievement
+#'   Determination (see `CAAQS_completeness()`); this argument is ignored except
+#'   for PM2.5, whose guidance has not been reviewed and which keeps a uniform
+#'   annual hourly-availability gate (0.5 by default).
 #'
 #' @description
 #' The Canadian Ambient Air Quality Standards (CAAQS) are part of a collaborative national Air Quality Management System (AQMS), to better protect human health and the environment.
@@ -25,8 +29,15 @@
 #' and the PM2.5 metrics are the 3-year average of the annual 98th percentile
 #' of daily means and the 3-year average of annual means. For O3, NO2 and SO2
 #' 3-year metric values are computed when at least two of the three annual
-#' values are available. Hourly datetimes are assumed to label the start of
-#' the averaging hour and to be in local standard time.
+#' values are available.
+#'
+#' Data completeness is assessed with the pollutant-specific criteria of the
+#' guidance documents' Table 5-3 (see `CAAQS_completeness()`): annual metric
+#' values are reported only for years meeting the applicable daily, annual and
+#' calendar-quarter criteria, and hours-per-year requirements are derived from
+#' the calendar rather than hardcoded leap-year arithmetic. Hourly datetimes
+#' are assumed to label the start of the averaging hour and to be in local
+#' standard time.
 #'
 #' @references
 #' \itemize{
@@ -73,29 +84,28 @@ CAAQS <- function(
   ) |>
     dplyr::mutate(year = lubridate::year(.data$date))
 
-  # Assess hours of data for each pollutant annually
-  has_enough_obs <- obs |>
-    dplyr::group_by(.data$year) |>
-    dplyr::summarise(
-      .groups = "drop",
-      dplyr::across(-"date", \(x) sum(!is.na(x)))
-    ) |>
-    dplyr::mutate(dplyr::across(-"year", \(x) {
-      total_hours <- ifelse(.data$year %% 4 == 0, 8784, 8760)
-      (x / total_hours > min_completeness) |>
-        handyr::swap(NA, with = FALSE)
-    })) |>
-    tidyr::complete(year = min(.data$year):max(.data$year))
+  # Assess data completeness for each pollutant annually, using the
+  # pollutant-specific criteria of the CCME GDADs (Table 5-3). The
+  # `min_completeness` argument applies only to PM2.5, whose guidance
+  # document has not yet been reviewed (see `CAAQS_completeness()`).
+  completeness <- CAAQS_completeness()
+  completeness$pm25$min_hours_fraction_year <- min_completeness
+  has_enough_obs <- CAAQS_has_enough_obs(obs, completeness)
 
-  # Check for 3 consecutive years for any pollutant
+  # Check for 3 consecutive years for any pollutant. `lag()` returns NA for
+  # the absent years created by tidyr::complete(), and NA + TRUE is NA, so
+  # propagate a FALSE for the missing years before summing.
   has_3_consecutive_years <- has_enough_obs |>
     dplyr::summarise(dplyr::across(-"year", \(x) {
-      any((x + dplyr::lag(x) + dplyr::lag(x, 2)) >= 3)
+      x <- x |>
+        handyr::swap(NA, with = FALSE) |>
+        dplyr::coalesce(FALSE)
+      any((x + dplyr::lag(x) + dplyr::lag(x, 2)) >= 3, na.rm = TRUE)
     }))
   if (all(!has_3_consecutive_years)) {
     stop(paste(
       "Cannot calculate CAAQS without at least one pollutant with at least 3 years",
-      "with `min_completeness`x100% of hourly observations."
+      "of complete data."
     ))
   }
 
@@ -109,7 +119,7 @@ CAAQS <- function(
         pol,
         "for year(s):",
         paste(insufficient_years, collapse = ", "),
-        "see argument `min_completeness`"
+        "see the CCME guidance documents' data completeness criteria"
       ))
       is_insufficient_year <- obs$year %in% insufficient_years
       obs[is_insufficient_year, pol] <- NA
@@ -135,6 +145,213 @@ CAAQS <- function(
     no2 = if (!is.null(no2_1hr_ppb)) CAAQS_no2(obs, thresholds),
     so2 = if (!is.null(so2_1hr_ppb)) CAAQS_so2(obs, thresholds)
   )
+}
+
+## CAAQS Completeness -----------------------------------------------------
+## Data-completeness configuration for each pollutant, one row per criterion,
+## quoting the Data completeness criteria (column 2) of Table 5-3 of the CCME
+## Guidance Document on Achievement Determination for each pollutant (Ozone
+## 2021; Nitrogen Dioxide 2020; Sulphur Dioxide 2020). The exceptions in
+## column 3 ("the [metric] exceeds the standard") are not implemented here;
+## deficient values are dropped rather than retained when they exceed.
+CAAQS_completeness <- function() {
+  list(
+    # Ozone GDAD (2021), Table 5-3 (Ozone Dmax 8-hour): "O3 Dmax 8-hour are
+    # available for at least 75% of the days in the period April 1 to
+    # September 30." The annual fourth-highest ranking is restricted to that
+    # season because it is "the time of year where the annual fourth highest
+    # will likely be recorded in most of Canada" (GDAD section 5.3).
+    o3 = list(
+      min_hours_of_day = 18L,
+      season = c(start = "04-01", end = "09-30"),
+      min_days_fraction = 0.75,
+      min_days_of_year = NULL,
+      min_days_fraction_quarters = NULL,
+      min_hours_fraction_year = NULL,
+      min_hours_fraction_quarters = NULL,
+      min_days_of_quarters = NULL
+    ),
+    # Nitrogen Dioxide GDAD (2020), Table 5-3:
+    #   NO2 Dmax 1-hour: "At least 18 of the 24 (75%) NO2 1-hour are
+    #     available in the day."
+    #   Annual 98th percentile of the NO2 Dmax 1-hour: "The NO2 Dmax 1-hour
+    #     are available for at least: 1. 75% of the days in a year; and
+    #     2. 60% of the days in each calendar quarter."
+    #   Annual metric value: "1. at least 75% of the NO2 1-hour are available
+    #     in the year; and 2. at least 60% of the NO2 1-hour are available in
+    #     each calendar quarter."
+    # Calendar quarters (GDAD footnote): Q1 January 1 - March 31; Q2 April 1
+    # - June 30; Q3 July 1 - September 30; Q4 October 1 - December 31.
+    no2 = list(
+      min_hours_of_day = 18L,
+      season = NULL,
+      min_days_fraction = 0.75,
+      min_days_of_year = NULL,
+      min_days_fraction_quarters = 0.6,
+      min_hours_fraction_year = 0.75,
+      min_hours_fraction_quarters = 0.6,
+      min_days_of_quarters = NULL
+    ),
+    # Sulphur Dioxide GDAD (2020), Table 5-3: identical structure to NO2 with
+    # SO2 in place of NO2 (SO2 Dmax 1-hour "At least 18 of the 24 (75%) ...
+    # available in the day"; annual 99th percentile "75% of the days in a
+    # year and 60% of the days in each calendar quarter"; annual metric
+    # value "75% of the SO2 1-hour ... in the year and 60% ... in each
+    # calendar quarter").
+    so2 = list(
+      min_hours_of_day = 18L,
+      season = NULL,
+      min_days_fraction = 0.75,
+      min_days_of_year = NULL,
+      min_days_fraction_quarters = 0.6,
+      min_hours_fraction_year = 0.75,
+      min_hours_fraction_quarters = 0.6,
+      min_days_of_quarters = NULL
+    ),
+    # PM2.5 GDAD not yet reviewed (issue #3): keep the package's previous
+    # uniform annual hourly-availability heuristic for PM2.5.
+    pm25 = list(min_hours_fraction_year = 0.5)
+  )
+}
+
+## Assess annual data completeness for each pollutant in `obs` (columns
+## `date` plus one numeric column per pollutant) against the per-pollutant
+## criteria in `completeness` (see CAAQS_completeness()). Returns a tibble
+## with one row per calendar year in the data and one logical column per
+## pollutant: TRUE only when every applicable criterion holds for the year.
+## Pollutants absent from the configuration (no criterion at all) are never
+## considered complete, so that unreviewed standards fail safe.
+CAAQS_has_enough_obs <- function(obs, completeness) {
+  if (is.null(obs$year)) {
+    obs$year <- lubridate::year(obs$date)
+  }
+  pols <- names(completeness)
+  pols <- pols[pols %in% names(obs)]
+  obs <- obs |>
+    dplyr::mutate(date = .data$date |> lubridate::floor_date("days"))
+
+  # Hours per year and per calendar quarter are derived from the calendar
+  # via lubridate's leap-year rule (which handles century years correctly),
+  # replacing the previously hardcoded `year %% 4 == 0` leap check.
+  yrs <- sort(unique(obs$year))
+  stats_year <- data.frame(year = yrs) |>
+    dplyr::mutate(
+      hours_in_year = 24 * (365 + as.integer(lubridate::leap_year(.data$year)))
+    )
+  stats_quarter <- data.frame(
+    year = rep(yrs, each = 4),
+    quarter = paste0("Q", 1:4)
+  ) |>
+    dplyr::mutate(
+      hours_in_quarter = 24 * (
+        c(90, 91, 92, 92) +
+          as.integer(.data$quarter == "Q1" & lubridate::leap_year(.data$year))
+      )
+    )
+  # One row per year x pollutant x day: distinct hours with a non-NA
+  # observation, used by both the daily and the annual gates.
+  avail <- obs |>
+    tidyr::pivot_longer(dplyr::all_of(pols), names_to = "pol", values_to = "conc") |>
+    dplyr::group_by(.data$year, .data$pol, .data$date) |>
+    dplyr::summarise(hours = sum(!is.na(.data$conc)), .groups = "drop") |>
+    dplyr::mutate(
+      monthday = paste0(
+        sprintf("%02d", lubridate::month(.data$date)),
+        "-", sprintf("%02d", lubridate::day(.data$date))
+      )
+    )
+  out <- avail |>
+    dplyr::group_by(.data$year, .data$pol) |>
+    dplyr::group_modify(~ {
+      cfg <- completeness[[.y$pol]]
+      if (is.null(cfg)) {
+        return(tibble::tibble(ok = FALSE))
+      }
+      ok <- TRUE
+      # A day contributes an available daily maximum when it meets the
+      # daily criterion of Table 5-3 (e.g. "At least 18 of the 24 (75%)
+      # NO2 1-hour are available in the day"); with no daily criterion any
+      # observed hour makes the day available. Deficient days are excluded
+      # from the metric pipelines (see CAAQS_o3/no2/so2) but do not by
+      # themselves make the year incomplete: the annual criteria below are
+      # expressed in available days.
+      valid_day <- if (!is.null(cfg$min_hours_of_day)) {
+        .x$hours >= cfg$min_hours_of_day
+      } else {
+        .x$hours > 0
+      }
+      # Scope of the days gate: the season when one is configured (Ozone
+      # GDAD Table 5-3: "O3 Dmax 8-hour are available for at least 75% of
+      # the days in the period April 1 to September 30"), otherwise the
+      # whole year (NO2/SO2 GDADs Table 5-3: "available for at least 75% of
+      # the days in a year").
+      scope <- valid_day
+      if (!is.null(cfg$season)) {
+        in_season <-
+          .x$monthday >= cfg$season["start"] & .x$monthday <= cfg$season["end"]
+        scope <- valid_day & in_season
+      }
+      if (!is.null(cfg$min_days_fraction)) {
+        # The GDAD denominators are the calendar days of the year (or of
+        # the fixed April 1 - September 30 season, 183 days whether or not
+        # the year is a leap year).
+        days_in_scope <- if (!is.null(cfg$season)) {
+          183
+        } else {
+          365 + as.integer(lubridate::leap_year(.y$year))
+        }
+        ok <- ok && sum(scope) >= days_in_scope * cfg$min_days_fraction
+      }
+      if (!is.null(cfg$min_days_of_year)) {
+        ok <- ok && sum(valid_day) >= cfg$min_days_of_year
+      }
+      # Annual hourly gate, e.g. "at least 75% of the NO2 1-hour are
+      # available in the year" (NO2 and SO2 GDADs Table 5-3, annual metric
+      # value criteria).
+      if (!is.null(cfg$min_hours_fraction_year)) {
+        hours_in_year <- stats_year$hours_in_year[stats_year$year == .y$year]
+        ok <- ok && sum(.x$hours) >= cfg$min_hours_fraction_year * hours_in_year
+      }
+      # Calendar-quarter gates: "60% of the days in each calendar quarter"
+      # (percentile criteria) and "60% of the NO2 1-hour are available in
+      # each calendar quarter" (annual metric value criteria), with Q1
+      # January 1 - March 31 through Q4 October 1 - December 31 (GDADs
+      # Table 5-3 footnote).
+      if (!is.null(cfg$min_days_fraction_quarters) ||
+            !is.null(cfg$min_hours_fraction_quarters) ||
+            !is.null(cfg$min_days_of_quarters)) {
+        qd <- .x |>
+          dplyr::mutate(
+            quarter = paste0("Q", lubridate::quarter(.data$date, fiscal_start = 1)),
+            valid = valid_day
+          ) |>
+          dplyr::group_by(.data$quarter) |>
+          dplyr::summarise(
+            .groups = "drop",
+            days = sum(.data$valid),
+            hours_avail = sum(.data$hours)
+          )
+        q <- dplyr::left_join(
+          stats_quarter[stats_quarter$year == .y$year, ],
+          qd,
+          by = "quarter"
+        )
+        if (!is.null(cfg$min_days_fraction_quarters)) {
+          ok <- ok &&
+            all(q$days >= q$hours_in_quarter / 24 * cfg$min_days_fraction_quarters)
+        }
+        if (!is.null(cfg$min_hours_fraction_quarters)) {
+          ok <- ok && all(q$hours_avail >= q$hours_in_quarter * cfg$min_hours_fraction_quarters)
+        }
+        if (!is.null(cfg$min_days_of_quarters)) {
+          ok <- ok && all(q$days >= cfg$min_days_of_quarters)
+        }
+      }
+      tibble::tibble(ok = isTRUE(ok))
+    }) |>
+    dplyr::ungroup() |>
+    dplyr::arrange(.data$year) |>
+    tidyr::pivot_wider(names_from = "pol", values_from = "ok")
 }
 
 ## CAAQS Helpers ----------------------------------------------------------
@@ -214,15 +431,28 @@ CAAQS_o3 <- function(obs, thresholds) {
         )
     ) |>
     # 8-hour rolling means -> daily maximum over the 24 windows (J = 1 to 24)
-    # ending in the day. Days with no valid window contribute no daily
-    # maximum to the annual ranking.
+    # ending in the day. Table 5-3 (Ozone Dmax 8-hour): "At least 18 (75%) of
+    # the 24 O3-8-hr are available in the day", so days with fewer than 18
+    # valid windows contribute no daily maximum to the annual ranking.
     dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
     dplyr::summarise(
       daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE),
+      valid_windows = sum(!is.na(.data$`8hr_mean_o3`)),
       .groups = "drop"
     ) |>
-    dplyr::filter(!is.na(.data$daily_max_8hr_mean_o3)) |>
-    # daily max -> annual 4th highest (ties repeated in rank order)
+    dplyr::filter(.data$valid_windows >= 18) |>
+    # Daily maxima are ranked for the annual fourth-highest only within the
+    # ozone season. Table 5-3 (Annual fourth highest O3 Dmax 8-hour): "O3
+    # Dmax 8-hour are available for at least 75% of the days in the period
+    # April 1 to September 30"; section 5.3 restricts the completeness
+    # requirement to that period because it is "the time of year where the
+    # annual fourth highest will likely be recorded in most of Canada"
+    # (values outside the season would still count when the season criterion
+    # is met or the value exceeds the standard -- an exceptions rule not
+    # implemented here; see CAAQS_completeness()).
+    dplyr::filter(
+      !(lubridate::month(.data$date) %in% c(1:3, 10:12))
+    ) |>
     dplyr::group_by(year = .data$date |> lubridate::year()) |>
     dplyr::arrange(dplyr::desc(.data$daily_max_8hr_mean_o3)) |>
     dplyr::summarise(
@@ -255,16 +485,25 @@ CAAQS_no2 <- function(obs, thresholds) {
     # + annual mean
     dplyr::group_by(year = .data$date |> lubridate::year()) |>
     dplyr::mutate(annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE)) |>
-    # hourly mean -> daily maxima
+    # hourly mean -> daily maxima, keeping only days meeting the daily
+    # completeness criterion. Table 5-3 (NO2 Dmax 1-hour): "At least 18 of
+    # the 24 (75%) NO2 1-hour are available in the day"; those daily maxima
+    # feed both the annual 98th percentile and (via the metric value
+    # criteria) the annual-mean metric.
     dplyr::group_by(
       date = .data$date |> lubridate::floor_date("1 days"),
       .data$annual_mean_of_hourly
     ) |>
     dplyr::summarise(
       .groups = "drop",
-      daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE)
+      daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE),
+      daily_avail_hours = sum(!is.na(.data$no2))
     ) |>
-    # daily maxima -> annual 98th percentile
+    dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$no2$min_hours_of_day) |>
+    # daily maxima -> annual 98th percentile. Table 5-3 (Annual 98th
+    # percentile of the NO2 Dmax 1-hour): the NO2 Dmax 1-hour must "be
+    # available for at least: 1. 75% of the days in a year; and 2. 60% of
+    # the days in each calendar quarter", so the percentile is NA otherwise.
     dplyr::group_by(
       year = date |> lubridate::year(),
       .data$annual_mean_of_hourly
@@ -319,18 +558,25 @@ CAAQS_so2 <- function(obs, thresholds) {
     # + annual mean
     dplyr::group_by(year = date |> lubridate::year()) |>
     dplyr::mutate(annual_mean_of_hourly = .data$so2 |> mean(na.rm = TRUE)) |>
-    # hourly mean -> daily maxima
+    # hourly mean -> daily maxima, keeping only days meeting the daily
+    # completeness criterion. Table 5-3 (SO2 Dmax 1-hour): "At least 18 of
+    # the 24 (75%) SO2 1-hour are available in the day".
     dplyr::group_by(
       date = date |> lubridate::floor_date("1 days"),
       .data$annual_mean_of_hourly
     ) |>
     dplyr::summarise(
       .groups = "drop",
-      daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE)
+      daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE),
+      daily_avail_hours = sum(!is.na(.data$so2))
     ) |>
-    # daily maxima -> annual 99th percentile. Uses the GDAD percentile
-    # ranking approach (Appendix B): the Kth highest daily maximum,
-    # K = NDM - trunc(NDM * 0.99)
+    dplyr::filter(.data$daily_avail_hours >= CAAQS_completeness()$so2$min_hours_of_day) |>
+    # daily maxima -> annual 99th percentile. Table 5-3 (Annual 99th
+    # percentile of the SO2 Dmax 1-hour): the SO2 Dmax 1-hour must "be
+    # available for at least: 1. 75% of the days in a year; and 2. 60% of
+    # the days in each calendar quarter", so the percentile is NA otherwise.
+    # Uses the GDAD percentile ranking approach (Appendix B): the Kth highest
+    # daily maximum, K = NDM - trunc(NDM * 0.99)
     dplyr::group_by(
       year = date |> lubridate::year(),
       .data$annual_mean_of_hourly

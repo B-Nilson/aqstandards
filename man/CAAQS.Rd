@@ -24,7 +24,11 @@ CAAQS(
 
 \item{so2_1hr_ppb}{(Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).}
 
-\item{min_completeness}{A single value from 0 to 1 indicating the required annual data completeness for a pollutant. Default is 0.5 (50 percent).}
+\item{min_completeness}{Deprecated. Data completeness is now assessed with the
+pollutant-specific criteria in the CCME Guidance Documents on Achievement
+Determination (see \code{CAAQS_completeness()}); this argument is ignored except
+for PM2.5, whose guidance has not been reviewed and which keeps a uniform
+annual hourly-availability gate (0.5 by default).}
 }
 \value{
 a list of tibbles (data.frames), one tibble per pollutant provided with annual CAAQS metrics and management levels
@@ -47,8 +51,15 @@ interpolation); annual metrics are annual means of hourly concentrations;
 and the PM2.5 metrics are the 3-year average of the annual 98th percentile
 of daily means and the 3-year average of annual means. For O3, NO2 and SO2
 3-year metric values are computed when at least two of the three annual
-values are available. Hourly datetimes are assumed to label the start of
-the averaging hour and to be in local standard time.
+values are available.
+
+Data completeness is assessed with the pollutant-specific criteria of the
+guidance documents' Table 5-3 (see \code{CAAQS_completeness()}): annual metric
+values are reported only for years meeting the applicable daily, annual and
+calendar-quarter criteria, and hours-per-year requirements are derived from
+the calendar rather than hardcoded leap-year arithmetic. Hourly datetimes
+are assumed to label the start of the averaging hour and to be in local
+standard time.
 }
 \examples{
 obs <- data.frame(
