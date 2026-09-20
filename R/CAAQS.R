@@ -5,7 +5,6 @@
 #' @param o3_1hr_ppb (Optional). Vector of hourly mean ozone (O3) concentrations (ppb).
 #' @param no2_1hr_ppb (Optional). Vector of hourly mean nitrogen dioxide (NO2) concentrations (ppb).
 #' @param so2_1hr_ppb (Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).
-#' @param min_completeness A single value from 0 to 1 indicating the required annual data completeness for a pollutant. Default is 0.5 (50 percent).
 #'
 #' @description
 #' The Canadian Ambient Air Quality Standards (CAAQS) are part of a collaborative national Air Quality Management System (AQMS), to better protect human health and the environment.
@@ -14,7 +13,50 @@
 #' Management levels (Green -> Yellow -> Orange -> Red) are defined for each pollutant standard.
 #' A "Red" level indicates exceedance of the CAAQS and management plans are typically developed for regions at "Orange" or worse levels.
 #'
-#' @references \url{https://ccme.ca/en/air-quality-report}
+#' Metrics follow the CCME Guidance Documents on Achievement Determination:
+#' the O3 metric is the 3-year average of the annual 4th-highest daily maximum
+#' 8-hour rolling average, with each rolling window assigned to the hour
+#' ending the averaging period; the NO2 (SO2) hourly metric is the 3-year
+#' average of the annual 98th (99th) percentile of daily maximum 1-hour
+#' concentrations, with percentiles computed by the GDAD percentile ranking
+#' approach (the Kth highest value, K = n - trunc(n * p), with no
+#' interpolation); annual metrics are annual means of hourly concentrations; the
+#' PM2.5 metrics are the 3-year average of the annual 98th percentile of daily
+#' 24-hr means (over days with at least 18 available hours) computed by the
+#' GDAD percentile ranking approach and the 3-year average of annual means of
+#' valid daily values. For O3, NO2, SO2 and PM2.5 3-year metric values are
+#' computed when at least two of the three annual values are available.
+#'
+#' Data completeness is assessed with the pollutant-specific criteria of the
+#' guidance documents (Table 5-3 of the Ozone, NO2 and SO2 GDADs; sections
+#' 4.1.4 and 4.2.4 of the PM2.5 GDAD; see `CAAQS_completeness()`): annual
+#' metric values are reported only for years meeting the applicable daily,
+#' annual and calendar-quarter criteria, and hours-per-year requirements are
+#' derived from the calendar rather than hardcoded leap-year arithmetic. The
+#' GDADs' exceptions to those criteria are applied: a deficient day or a
+#' gated-out year is still retained when its value exceeds the standard (a
+#' gated-out year's annual metric is computed from all available data), and
+#' the NO2/SO2 annual-mean metric accepts the relaxed 50%-per-calendar-
+#' quarter criterion of its Table 5-3 annual row when the annual average
+#' exceeds the standard. Metric values are rounded per the GDADs'
+#' decimal-place and rounding rules (Table 5-4 of the Ozone, NO2 and SO2
+#' GDADs; Appendix D of the PM2.5 GDAD) before comparison to a standard or
+#' management level, as the Guidance Document on Air Zone Management
+#' (2019, Appendix 2) requires, and management levels are assigned with
+#' that document's inclusive band edges (Red is strict `>`, the Orange and
+#' Yellow lower edges inclusive, Green below the Yellow edge). Hourly
+#' datetimes are assumed to label the start of the averaging hour and to
+#' be in local standard time.
+#'
+#' @references
+#' \itemize{
+#'   \item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
+#'   \item CCME, Guidance Document on Air Zone Management (2019), \url{https://ccme.ca/en/res/guidancedocumentonairzonemanagement_secured.pdf}
+#' }
 #' @family Canadian Air Quality
 #' @family Air Quality Standards
 #'
@@ -23,14 +65,28 @@
 #' @importFrom rlang .data
 #'
 #' @examples
-#' obs <- data.frame(
-#'   date = seq(
-#'     lubridate::ymd_h("2020-01-01 00"),
-#'     lubridate::ymd_h("2023-12-31 23"), "1 hours"
-#'   ),
-#'   pm25 = sample(1:150, 35064, TRUE), o3 = sample(1:150, 35064, TRUE),
-#'   no2 = sample(1:150, 35064, TRUE), so2 = sample(1:150, 35064, TRUE)
+#' # Three years of hourly data: a constant background with a handful of
+#' # elevated O3 plateau days. Every input is exact (no random generation),
+#' # so the output is reproducible. data-raw/CAAQS-regression-fixtures.R
+#' # holds a catalogue of rule-specific scenarios.
+#' hours <- seq(
+#'   lubridate::ymd_h("2021-01-01 00"),
+#'   lubridate::ymd_h("2023-12-31 23"), "1 hours"
 #' )
+#' obs <- data.frame(
+#'   date = hours,
+#'   pm25 = rep(10, length(hours)),
+#'   o3 = rep(30, length(hours)),
+#'   no2 = rep(10, length(hours)),
+#'   so2 = rep(1, length(hours))
+#' )
+#' for (day in paste0(rep(2021:2023, each = 4),
+#'                    c("-06-10", "-06-20", "-07-10", "-07-20"))) {
+#'   obs$o3[obs$date %in% seq(
+#'     lubridate::ymd_h(paste(day, "09")),
+#'     lubridate::ymd_h(paste(day, "16")), "1 hours"
+#'   )] <- 70
+#' }
 #' CAAQS(
 #'   dates = obs$date, pm25_1hr_ugm3 = obs$pm25,
 #'   o3_1hr_ppb = obs$o3, no2_1hr_ppb = obs$no2, so2_1hr_ppb = obs$so2
@@ -40,8 +96,7 @@ CAAQS <- function(
   pm25_1hr_ugm3 = NULL,
   o3_1hr_ppb = NULL,
   no2_1hr_ppb = NULL,
-  so2_1hr_ppb = NULL,
-  min_completeness = 0.5
+  so2_1hr_ppb = NULL
 ) {
   # Join inputs
   obs <- dplyr::bind_cols(
@@ -53,33 +108,32 @@ CAAQS <- function(
   ) |>
     dplyr::mutate(year = lubridate::year(.data$date))
 
-  # Assess hours of data for each pollutant annually
-  has_enough_obs <- obs |>
-    dplyr::group_by(.data$year) |>
-    dplyr::summarise(
-      .groups = "drop",
-      dplyr::across(-"date", \(x) sum(!is.na(x)))
-    ) |>
-    dplyr::mutate(dplyr::across(-"year", \(x) {
-      total_hours <- ifelse(.data$year %% 4 == 0, 8784, 8760)
-      (x / total_hours > min_completeness) |>
-        handyr::swap(NA, with = FALSE)
-    })) |>
-    tidyr::complete(year = min(.data$year):max(.data$year))
+  # Assess data completeness for each pollutant annually, using the
+  # pollutant-specific criteria of the CCME GDADs (see CAAQS_completeness()).
+  has_enough_obs <- CAAQS_has_enough_obs(obs, CAAQS_completeness())
 
-  # Check for 3 consecutive years for any pollutant
+  # Check for 3 consecutive years for any pollutant. `lag()` returns NA for
+  # the absent years created by tidyr::complete(), and NA + TRUE is NA, so
+  # propagate a FALSE for the missing years before summing.
   has_3_consecutive_years <- has_enough_obs |>
     dplyr::summarise(dplyr::across(-"year", \(x) {
-      any((x + dplyr::lag(x) + dplyr::lag(x, 2)) >= 3)
+      x <- x |>
+        handyr::swap(NA, with = FALSE) |>
+        dplyr::coalesce(FALSE)
+      any((x + dplyr::lag(x) + dplyr::lag(x, 2)) >= 3, na.rm = TRUE)
     }))
   if (all(!has_3_consecutive_years)) {
     stop(paste(
       "Cannot calculate CAAQS without at least one pollutant with at least 3 years",
-      "with `min_completeness`x100% of hourly observations."
+      "of complete data."
     ))
   }
 
-  # Drop data for years lacking enough data
+  # Keep data for years lacking enough data: whether a gated-out year's
+  # data contribute a metric is decided inside CAAQS_<pollutant>() so that
+  # the GDADs' annual exceptions criteria ("The [annual fourth highest /
+  # 98th / 99th percentile based on the available data] exceeds the
+  # standard") can retain such a year. Warn for transparency:
   pols <- names(has_enough_obs)[-1]
   for (pol in pols) {
     insufficient_years <- has_enough_obs$year[unlist(!has_enough_obs[pol])]
@@ -89,10 +143,8 @@ CAAQS <- function(
         pol,
         "for year(s):",
         paste(insufficient_years, collapse = ", "),
-        "see argument `min_completeness`"
+        "see the CCME guidance documents' data completeness criteria"
       ))
-      is_insufficient_year <- obs$year %in% insufficient_years
-      obs[is_insufficient_year, pol] <- NA
     }
   }
 
@@ -108,287 +160,11 @@ CAAQS <- function(
     dplyr::arrange(.data$date)
 
   # Calculate CAAQS attainment where data provided
-  thresholds <- CAAQS_thesholds()
+  thresholds <- CAAQS_thresholds()
   list(
     pm25 = if (!is.null(pm25_1hr_ugm3)) CAAQS_pm25(obs, thresholds),
     o3 = if (!is.null(o3_1hr_ppb)) CAAQS_o3(obs, thresholds),
     no2 = if (!is.null(no2_1hr_ppb)) CAAQS_no2(obs, thresholds),
     so2 = if (!is.null(so2_1hr_ppb)) CAAQS_so2(obs, thresholds)
-  )
-}
-
-## CAAQS Helpers ----------------------------------------------------------
-CAAQS_pm25 <- function(obs, thresholds) {
-  obs |>
-    # Hourly mean -> daily mean
-    dplyr::group_by(
-      date = .data$date |> lubridate::floor_date("days")
-    ) |>
-    dplyr::summarise(dplyr::across(
-      dplyr::everything(),
-      c(mean = \(x) mean(x, na.rm = TRUE))
-    )) |>
-    # Daily mean -> annual 98th percentile and annual mean
-    dplyr::group_by(year = lubridate::year(.data$date)) |>
-    dplyr::summarise(
-      .groups = "drop",
-      perc_98_of_daily_means = .data$pm25_mean |>
-        stats::quantile(0.98, na.rm = T) |>
-        unname(),
-      mean_of_daily_means = mean(.data$pm25_mean, na.rm = TRUE)
-    ) |>
-    # +3 year averages, +whether standard is met
-    dplyr::mutate(
-      `3yr_mean_of_perc_98` = .data$perc_98_of_daily_means |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
-      management_level_daily = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`3yr_mean_of_perc_98`[.data$year == y],
-              thresholds = thresholds$pm25$daily
-            )
-          }
-        ),
-      `3yr_mean_of_means` = .data$mean_of_daily_means |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
-      management_level_annual = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`3yr_mean_of_means`[.data$year == y],
-              thresholds = thresholds$pm25$annual
-            )
-          }
-        )
-    ) |>
-    dplyr::relocate(
-      "management_level_daily",
-      "mean_of_daily_means",
-      .after = "3yr_mean_of_perc_98"
-    )
-}
-
-CAAQS_o3 <- function(obs, thresholds) {
-  obs |>
-    # hourly mean -> 8 hourly mean
-    dplyr::group_by(
-      date = .data$date |>
-        lubridate::floor_date("8 hours")
-    ) |>
-    dplyr::summarise(`8hr_mean_o3` = .data$o3 |> mean(na.rm = TRUE)) |>
-    # 8 hourly mean -> daily max
-    dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
-    dplyr::summarise(
-      daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE)
-    ) |>
-    # daily max -> annual 4th highest
-    dplyr::group_by(year = .data$date |> lubridate::year()) |>
-    dplyr::arrange(dplyr::desc(.data$daily_max_8hr_mean_o3)) |>
-    dplyr::summarise(
-      .groups = "drop",
-      fourth_highest_daily_max_8hr_mean_o3 = .data$daily_max_8hr_mean_o3[4]
-    ) |>
-    # +3 year averages, +whether standard is met
-    dplyr::mutate(
-      `3yr_mean` = .data$fourth_highest_daily_max_8hr_mean_o3 |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
-      management_level_8hr = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`3yr_mean`[.data$year == y],
-              thresholds = thresholds$o3$`8hr`
-            )
-          }
-        )
-    )
-}
-
-CAAQS_no2 <- function(obs, thresholds) {
-  obs |>
-    # + annual mean
-    dplyr::group_by(year = .data$date |> lubridate::year()) |>
-    dplyr::mutate(annual_mean_of_hourly = .data$no2 |> mean(na.rm = TRUE)) |>
-    # hourly mean -> daily maxima
-    dplyr::group_by(
-      date = .data$date |> lubridate::floor_date("1 days"),
-      .data$annual_mean_of_hourly
-    ) |>
-    dplyr::summarise(
-      .groups = "drop",
-      daily_max_hourly_no2 = .data$no2 |> handyr::max(na.rm = TRUE)
-    ) |>
-    # daily maxima -> annual 98th percentile
-    dplyr::group_by(
-      year = date |> lubridate::year(),
-      .data$annual_mean_of_hourly
-    ) |>
-    dplyr::summarise(
-      .groups = "drop",
-      perc_98_of_daily_maxima = .data$daily_max_hourly_no2 |>
-        stats::quantile(0.98, na.rm = T) |>
-        unname()
-    ) |>
-    # +3 year averages, +standard for that year, +whether standard is met
-    dplyr::mutate(
-      `3yr_mean_of_perc_98` = .data$perc_98_of_daily_maxima |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
-      management_level_hourly = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`annual_mean_of_hourly`[.data$year == y],
-              thresholds = thresholds$no2$hourly
-            )
-          }
-        ),
-      management_level_annual = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`3yr_mean_of_perc_98`[.data$year == y],
-              thresholds = thresholds$no2$annual
-            )
-          }
-        )
-    ) |>
-    dplyr::relocate(
-      "management_level_hourly",
-      .after = "annual_mean_of_hourly"
-    )
-}
-
-CAAQS_so2 <- function(obs, thresholds) {
-  obs |>
-    # + annual mean
-    dplyr::group_by(year = date |> lubridate::year()) |>
-    dplyr::mutate(annual_mean_of_hourly = .data$so2 |> mean(na.rm = TRUE)) |>
-    # hourly mean -> daily maxima
-    dplyr::group_by(
-      date = date |> lubridate::floor_date("1 days"),
-      .data$annual_mean_of_hourly
-    ) |>
-    dplyr::summarise(
-      .groups = "drop",
-      daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE)
-    ) |>
-    # daily maxima -> annual 98th percentile
-    dplyr::group_by(
-      year = date |> lubridate::year(),
-      .data$annual_mean_of_hourly
-    ) |>
-    dplyr::summarise(
-      .groups = "drop",
-      perc_99_of_daily_maxima = .data$daily_max_hourly_so2 |>
-        stats::quantile(0.99, na.rm = T) |>
-        unname()
-    ) |>
-    # +3 year averages, +standard for that year, +whether standard is met
-    dplyr::mutate(
-      `3yr_mean_of_perc_99` = .data$perc_99_of_daily_maxima |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
-      management_level_hourly = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`annual_mean_of_hourly`[.data$year == y],
-              thresholds = thresholds$so2$hourly
-            )
-          }
-        ),
-      management_level_annual = .data$year |>
-        sapply(
-          \(y) {
-            CAAQS_meets_standard(
-              year = y,
-              metric = .data$`3yr_mean_of_perc_99`[.data$year == y],
-              thresholds = thresholds$so2$annual
-            )
-          }
-        )
-    ) |>
-    dplyr::relocate(
-      "management_level_hourly",
-      .after = "annual_mean_of_hourly"
-    )
-}
-
-CAAQS_meets_standard <- function(year, metric, thresholds) {
-  mgmt_levels <- thresholds[as.numeric(names(thresholds)) <= year] |>
-    dplyr::last()
-  if (length(mgmt_levels) == 0) {
-    return(NA)
-  }
-  # Calculate CAAQS attainment
-  attainment <- mgmt_levels |>
-    handyr::for_each(
-      .as_list = TRUE,
-      .bind = TRUE,
-      .show_progress = FALSE,
-      \(lvl) metric > lvl
-    )
-  attainment <- attainment |>
-    apply(1, \(x) handyr::min(which(x), na.rm = TRUE))
-  attainment[!is.na(attainment)] <- names(mgmt_levels)[
-    attainment[!is.na(attainment)]
-  ]
-  return(attainment)
-}
-
-CAAQS_thesholds <- function() {
-  list(
-    pm25 = list(
-      daily = list(
-        "2015" = c(Red = 28, Orange = 19, Yellow = 10.01, Green = 0),
-        "2020" = c(Red = 27, Orange = 19, Yellow = 10.01, Green = 0)
-      ),
-      annual = list(
-        "2015" = c(Red = 10, Orange = 6.41, Yellow = 4.01, Green = 0),
-        "2020" = c(Red = 8.8, Orange = 6.41, Yellow = 4.01, Green = 0)
-      )
-    ),
-    o3 = list(
-      `8hr` = list(
-        "2015" = c(Red = 63, Orange = 56.01, Yellow = 50.01, Green = 0),
-        "2020" = c(Red = 62, Orange = 56.01, Yellow = 50.01, Green = 0),
-        "2025" = c(Red = 60, Orange = 56.01, Yellow = 50.01, Green = 0)
-      )
-    ),
-    no2 = list(
-      hourly = list(
-        "2020" = c(Red = 60, Orange = 31.01, Yellow = 20.01, Green = 0),
-        "2025" = c(Red = 42, Orange = 31.01, Yellow = 20.01, Green = 0)
-      ),
-      annual = list(
-        "2020" = c(Red = 17, Orange = 7.01, Yellow = 2.01, Green = 0),
-        "2025" = c(Red = 12, Orange = 7.01, Yellow = 2.01, Green = 0)
-      )
-    ),
-    so2 = list(
-      hourly = list(
-        "2020" = c(Red = 70, Orange = 50.01, Yellow = 30.01, Green = 0),
-        "2025" = c(Red = 65, Orange = 50.01, Yellow = 30.01, Green = 0)
-      ),
-      annual = list(
-        "2020" = c(Red = 5, Orange = 3.01, Yellow = 2.01, Green = 0),
-        "2025" = c(Red = 4, Orange = 3.01, Yellow = 2.01, Green = 0)
-      )
-    )
-  )
-}
-# TODO: implement
-CAAQS_objectives <- function(mgmt_levels) {
-  c(
-    Green = "To maintain good air quality through proactive air management measures to keep clean areas clean.",
-    Yellow = "To improve air quality using early and ongoing actions for continuous improvement.",
-    Orange = "To improve air quality through active air management and prevent exceedance of the CAAQS.",
-    Red = "To reduce pollutant levels below the CAAQS through advanced air management actions."
   )
 }

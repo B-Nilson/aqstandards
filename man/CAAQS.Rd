@@ -9,8 +9,7 @@ CAAQS(
   pm25_1hr_ugm3 = NULL,
   o3_1hr_ppb = NULL,
   no2_1hr_ppb = NULL,
-  so2_1hr_ppb = NULL,
-  min_completeness = 0.5
+  so2_1hr_ppb = NULL
 )
 }
 \arguments{
@@ -23,8 +22,6 @@ CAAQS(
 \item{no2_1hr_ppb}{(Optional). Vector of hourly mean nitrogen dioxide (NO2) concentrations (ppb).}
 
 \item{so2_1hr_ppb}{(Optional). Vector of hourly mean sulphur dioxide (SO2) concentrations (ppb).}
-
-\item{min_completeness}{A single value from 0 to 1 indicating the required annual data completeness for a pollutant. Default is 0.5 (50 percent).}
 }
 \value{
 a list of tibbles (data.frames), one tibble per pollutant provided with annual CAAQS metrics and management levels
@@ -35,23 +32,79 @@ Standards at various averaging periods are defined for fine particulate matter (
 
 Management levels (Green -> Yellow -> Orange -> Red) are defined for each pollutant standard.
 A "Red" level indicates exceedance of the CAAQS and management plans are typically developed for regions at "Orange" or worse levels.
+
+Metrics follow the CCME Guidance Documents on Achievement Determination:
+the O3 metric is the 3-year average of the annual 4th-highest daily maximum
+8-hour rolling average, with each rolling window assigned to the hour
+ending the averaging period; the NO2 (SO2) hourly metric is the 3-year
+average of the annual 98th (99th) percentile of daily maximum 1-hour
+concentrations, with percentiles computed by the GDAD percentile ranking
+approach (the Kth highest value, K = n - trunc(n * p), with no
+interpolation); annual metrics are annual means of hourly concentrations; the
+PM2.5 metrics are the 3-year average of the annual 98th percentile of daily
+24-hr means (over days with at least 18 available hours) computed by the
+GDAD percentile ranking approach and the 3-year average of annual means of
+valid daily values. For O3, NO2, SO2 and PM2.5 3-year metric values are
+computed when at least two of the three annual values are available.
+
+Data completeness is assessed with the pollutant-specific criteria of the
+guidance documents (Table 5-3 of the Ozone, NO2 and SO2 GDADs; sections
+4.1.4 and 4.2.4 of the PM2.5 GDAD; see \code{CAAQS_completeness()}): annual
+metric values are reported only for years meeting the applicable daily,
+annual and calendar-quarter criteria, and hours-per-year requirements are
+derived from the calendar rather than hardcoded leap-year arithmetic. The
+GDADs' exceptions to those criteria are applied: a deficient day or a
+gated-out year is still retained when its value exceeds the standard (a
+gated-out year's annual metric is computed from all available data), and
+the NO2/SO2 annual-mean metric accepts the relaxed 50\%-per-calendar-
+quarter criterion of its Table 5-3 annual row when the annual average
+exceeds the standard. Metric values are rounded per the GDADs'
+decimal-place and rounding rules (Table 5-4 of the Ozone, NO2 and SO2
+GDADs; Appendix D of the PM2.5 GDAD) before comparison to a standard or
+management level, as the Guidance Document on Air Zone Management
+(2019, Appendix 2) requires, and management levels are assigned with
+that document's inclusive band edges (Red is strict \code{>}, the Orange and
+Yellow lower edges inclusive, Green below the Yellow edge). Hourly
+datetimes are assumed to label the start of the averaging hour and to
+be in local standard time.
 }
 \examples{
-obs <- data.frame(
-  date = seq(
-    lubridate::ymd_h("2020-01-01 00"),
-    lubridate::ymd_h("2023-12-31 23"), "1 hours"
-  ),
-  pm25 = sample(1:150, 35064, TRUE), o3 = sample(1:150, 35064, TRUE),
-  no2 = sample(1:150, 35064, TRUE), so2 = sample(1:150, 35064, TRUE)
+# Three years of hourly data: a constant background with a handful of
+# elevated O3 plateau days. Every input is exact (no random generation),
+# so the output is reproducible. data-raw/CAAQS-regression-fixtures.R
+# holds a catalogue of rule-specific scenarios.
+hours <- seq(
+  lubridate::ymd_h("2021-01-01 00"),
+  lubridate::ymd_h("2023-12-31 23"), "1 hours"
 )
+obs <- data.frame(
+  date = hours,
+  pm25 = rep(10, length(hours)),
+  o3 = rep(30, length(hours)),
+  no2 = rep(10, length(hours)),
+  so2 = rep(1, length(hours))
+)
+for (day in paste0(rep(2021:2023, each = 4),
+                   c("-06-10", "-06-20", "-07-10", "-07-20"))) {
+  obs$o3[obs$date \%in\% seq(
+    lubridate::ymd_h(paste(day, "09")),
+    lubridate::ymd_h(paste(day, "16")), "1 hours"
+  )] <- 70
+}
 CAAQS(
   dates = obs$date, pm25_1hr_ugm3 = obs$pm25,
   o3_1hr_ppb = obs$o3, no2_1hr_ppb = obs$no2, so2_1hr_ppb = obs$so2
 )
 }
 \references{
-\url{https://ccme.ca/en/air-quality-report}
+\itemize{
+\item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
+\item CCME, Guidance Document on Achievement Determination: Canadian Ambient Air Quality Standards for Fine Particulate Matter and Ozone (2012, PN 1483), \url{https://ccme.ca/en/res/pn1483_gdad_eng-secured.pdf}
+\item CCME, Guidance Document on Air Zone Management (2019), \url{https://ccme.ca/en/res/guidancedocumentonairzonemanagement_secured.pdf}
+}
 }
 \seealso{
 Other Air Quality Standards: 
