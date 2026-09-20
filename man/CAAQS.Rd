@@ -38,12 +38,17 @@ A "Red" level indicates exceedance of the CAAQS and management plans are typical
 
 Metrics follow the CCME Guidance Documents on Achievement Determination:
 the O3 metric is the 3-year average of the annual 4th-highest daily maximum
-8-hour rolling average; the NO2 (SO2) hourly metric is the 3-year average of
-the annual 98th (99th) percentile of daily maximum 1-hour concentrations;
-annual metrics are annual means of hourly concentrations; and the PM2.5
-metrics are the 3-year average of the annual 98th percentile of daily means
-and the 3-year average of annual means. Datetimes are assumed to be in
-local standard time.
+8-hour rolling average, with each rolling window assigned to the hour
+ending the averaging period; the NO2 (SO2) hourly metric is the 3-year
+average of the annual 98th (99th) percentile of daily maximum 1-hour
+concentrations, with percentiles computed by the GDAD percentile ranking
+approach (the Kth highest value, K = n - trunc(n * p), with no
+interpolation); annual metrics are annual means of hourly concentrations;
+and the PM2.5 metrics are the 3-year average of the annual 98th percentile
+of daily means and the 3-year average of annual means. For O3, NO2 and SO2
+3-year metric values are computed when at least two of the three annual
+values are available. Hourly datetimes are assumed to label the start of
+the averaging hour and to be in local standard time.
 }
 \examples{
 obs <- data.frame(
@@ -63,6 +68,8 @@ CAAQS(
 \itemize{
 \item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
 \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
+\item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
 }
 }
 \seealso{

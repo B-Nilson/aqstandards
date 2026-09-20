@@ -16,17 +16,24 @@
 #'
 #' Metrics follow the CCME Guidance Documents on Achievement Determination:
 #' the O3 metric is the 3-year average of the annual 4th-highest daily maximum
-#' 8-hour rolling average; the NO2 (SO2) hourly metric is the 3-year average of
-#' the annual 98th (99th) percentile of daily maximum 1-hour concentrations;
-#' annual metrics are annual means of hourly concentrations; and the PM2.5
-#' metrics are the 3-year average of the annual 98th percentile of daily means
-#' and the 3-year average of annual means. Datetimes are assumed to be in
-#' local standard time.
+#' 8-hour rolling average, with each rolling window assigned to the hour
+#' ending the averaging period; the NO2 (SO2) hourly metric is the 3-year
+#' average of the annual 98th (99th) percentile of daily maximum 1-hour
+#' concentrations, with percentiles computed by the GDAD percentile ranking
+#' approach (the Kth highest value, K = n - trunc(n * p), with no
+#' interpolation); annual metrics are annual means of hourly concentrations;
+#' and the PM2.5 metrics are the 3-year average of the annual 98th percentile
+#' of daily means and the 3-year average of annual means. For O3, NO2 and SO2
+#' 3-year metric values are computed when at least two of the three annual
+#' values are available. Hourly datetimes are assumed to label the start of
+#' the averaging hour and to be in local standard time.
 #'
 #' @references
 #' \itemize{
 #'   \item CCME, Canadian Ambient Air Quality Standards (report page), \url{https://ccme.ca/en/air-quality-report}
 #'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Ozone (2021), \url{https://ccme.ca/en/res/gdadforozonecaaqsen.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Nitrogen Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsfornitrogendioxide_en1.0.pdf}
+#'   \item CCME, Guidance Document on Achievement Determination for Canadian Ambient Air Quality Standards: Sulphur Dioxide (2020), \url{https://ccme.ca/en/res/gdadforcaaqsforsulphurdioxide_en1.0.pdf}
 #' }
 #' @family Canadian Air Quality
 #' @family Air Quality Standards
@@ -186,39 +193,50 @@ CAAQS_pm25 <- function(obs, thresholds) {
 
 CAAQS_o3 <- function(obs, thresholds) {
   obs |>
-    # hourly mean -> 8-hour rolling mean (all consecutive windows starting at
-    # each hour, local standard time, per the CCME Guidance Document on
-    # Achievement Determination for Ozone); each window needs at least 6 of 8
-    # valid hours to produce an 8-hour mean. Windows starting late in the day
-    # spill into the next day; per the GDAD, a spilling window is attributed to
-    # the day of its start hour.
+    # hourly mean -> 8-hour rolling mean, per the CCME Guidance Document on
+    # Achievement Determination for Ozone (2021), eq. 5.1: the O3-8-hr for
+    # hour J (J = 1 to 24) is the mean of the O3 1-hour over the 8-hour period
+    # ending at that hour and is assigned to that ending hour. N, the number
+    # of available O3 1-hour in the period, may be 6, 7 or 8: Table 5-3
+    # requires at least six of the eight 1-hour values, so series starts use
+    # 6- or 7-hour averages as in the GDAD's January 1 example (first average
+    # for the hour 01:00 built from the hours back to 18:00 on December 31).
+    # The window ending at hour J occupies the hourly rows labelled
+    # [J - 7, J] under hour-ending labels, and the 24 windows of a calendar
+    # day are the rolling values at that day's 24 hourly rows.
     dplyr::mutate(
       `8hr_mean_o3` = .data$o3 |>
         handyr::rolling(
           "mean",
           .width = 8,
-          .direction = "forward",
+          .direction = "backward",
           .min_non_na = 6
-        ),
-      window_start_day = .data$date |> lubridate::floor_date("days")
+        )
     ) |>
-    # 8-hour rolling means -> daily maximum (max over windows starting that day)
-    dplyr::group_by(.data$window_start_day) |>
+    # 8-hour rolling means -> daily maximum over the 24 windows (J = 1 to 24)
+    # ending in the day. Days with no valid window contribute no daily
+    # maximum to the annual ranking.
+    dplyr::group_by(date = .data$date |> lubridate::floor_date("days")) |>
     dplyr::summarise(
       daily_max_8hr_mean_o3 = .data$`8hr_mean_o3` |> handyr::max(na.rm = TRUE),
       .groups = "drop"
     ) |>
-    # daily max -> annual 4th highest
-    dplyr::group_by(year = .data$window_start_day |> lubridate::year()) |>
+    dplyr::filter(!is.na(.data$daily_max_8hr_mean_o3)) |>
+    # daily max -> annual 4th highest (ties repeated in rank order)
+    dplyr::group_by(year = .data$date |> lubridate::year()) |>
     dplyr::arrange(dplyr::desc(.data$daily_max_8hr_mean_o3)) |>
     dplyr::summarise(
       .groups = "drop",
       fourth_highest_daily_max_8hr_mean_o3 = .data$daily_max_8hr_mean_o3[4]
     ) |>
-    # +3 year averages, +whether standard is met
+    # +3 year averages, +whether standard is met. Per GDAD Table 5-3 the
+    # metric value may be based on two of the possible three annual fourth
+    # highest, so a 3-year window needs at least 2 available years.
     dplyr::mutate(
       `3yr_mean` = .data$fourth_highest_daily_max_8hr_mean_o3 |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
+        handyr::rolling(
+          "mean", .width = 3, .direction = "backward", .min_non_na = 2
+        ),
       management_level_8hr = .data$year |>
         sapply(
           \(y) {
@@ -253,14 +271,19 @@ CAAQS_no2 <- function(obs, thresholds) {
     ) |>
     dplyr::summarise(
       .groups = "drop",
+      # Annual 98th percentile via the GDAD percentile ranking approach
+      # (Appendix B): the Kth highest daily maximum, K = NDM - trunc(NDM * 0.98)
       perc_98_of_daily_maxima = .data$daily_max_hourly_no2 |>
-        stats::quantile(0.98, na.rm = T) |>
-        unname()
+        CAAQS_rank_percentile(0.98)
     ) |>
-    # +3 year averages, +standard for that year, +whether standard is met
+    # +3 year averages, +standard for that year, +whether standard is met.
+    # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
+    # the possible three annual 98th percentiles.
     dplyr::mutate(
       `3yr_mean_of_perc_98` = .data$perc_98_of_daily_maxima |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
+        handyr::rolling(
+          "mean", .width = 3, .direction = "backward", .min_non_na = 2
+        ),
       # The hourly CAAQS metric is the 3-year average of the annual 98th
       # percentile of daily maximum 1-hour concentrations; the annual CAAQS
       # metric is the annual mean of 1-hour concentrations.
@@ -305,7 +328,9 @@ CAAQS_so2 <- function(obs, thresholds) {
       .groups = "drop",
       daily_max_hourly_so2 = .data$so2 |> handyr::max(na.rm = TRUE)
     ) |>
-    # daily maxima -> annual 98th percentile
+    # daily maxima -> annual 99th percentile. Uses the GDAD percentile
+    # ranking approach (Appendix B): the Kth highest daily maximum,
+    # K = NDM - trunc(NDM * 0.99)
     dplyr::group_by(
       year = date |> lubridate::year(),
       .data$annual_mean_of_hourly
@@ -313,13 +338,16 @@ CAAQS_so2 <- function(obs, thresholds) {
     dplyr::summarise(
       .groups = "drop",
       perc_99_of_daily_maxima = .data$daily_max_hourly_so2 |>
-        stats::quantile(0.99, na.rm = T) |>
-        unname()
+        CAAQS_rank_percentile(0.99)
     ) |>
-    # +3 year averages, +standard for that year, +whether standard is met
+    # +3 year averages, +standard for that year, +whether standard is met.
+    # Per the GDAD (Table 5-3) the 1-hour metric value may be based on two of
+    # the possible three annual 99th percentiles.
     dplyr::mutate(
       `3yr_mean_of_perc_99` = .data$perc_99_of_daily_maxima |>
-        handyr::rolling("mean", .width = 3, .direction = "backward"),
+        handyr::rolling(
+          "mean", .width = 3, .direction = "backward", .min_non_na = 2
+        ),
       # The hourly CAAQS metric is the 3-year average of the annual 99th
       # percentile of daily maximum 1-hour concentrations; the annual CAAQS
       # metric is the annual mean of 1-hour concentrations.
@@ -348,6 +376,26 @@ CAAQS_so2 <- function(obs, thresholds) {
       "management_level_hourly",
       .after = "annual_mean_of_hourly"
     )
+}
+
+## Percentile ranking approach from the CCME GDADs (e.g. NO2 GDAD, Appendix
+## B): the p-th percentile of NDM available values is the Kth highest value
+## in the decreasing ordered array, with K = NDM - Truncated(NDM * p) and
+## "Truncated" discarding the decimal part (guarded by a small tolerance so
+## that floating-point products like 100 * 0.99 = 98.999... truncate to the
+## whole number the GDAD intends). Ties are repeated in rank order.
+## Unlike stats::quantile() (type 7) no interpolation between order
+## statistics is performed, and for NDM * p a whole number the value is the
+## (NDM - NDM * p)th highest, not the NDM * p-th smallest. Returns NA for an
+## empty input.
+CAAQS_rank_percentile <- function(x, p) {
+  x <- x[!is.na(x)]
+  n <- length(x)
+  if (n == 0L) {
+    return(NA_real_)
+  }
+  k <- n - floor(n * p + 1e-9)
+  sort(x, decreasing = TRUE)[k]
 }
 
 CAAQS_meets_standard <- function(year, metric, thresholds) {
