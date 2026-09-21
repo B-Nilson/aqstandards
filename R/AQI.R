@@ -144,11 +144,21 @@ AQI <- function(
     all_missing$so2_24hr_ppb <- FALSE
   }
 
-  # Get Daily mean values for all pollutants/averaging times
+  # Daily aggregation (EPA TAD: the AQI is based on "daily air quality
+  # summaries, specifically daily maximums or daily averages"). The 1-hour
+  # SO2 daily max is captured here for the fixed-at-200 exception below;
+  # the remaining daily-max metrics are converted in the follow-up commit.
   dat <- dat |>
     dplyr::group_by(
       date = .data$date |>
         lubridate::floor_date("days")
+    ) |>
+    # Per-day max of the 1-hour SO2 series, computed on the raw hourly
+    # values BEFORE summarise -- inside summarise, later expressions see
+    # already-summarised columns, so the max there would be the max of the
+    # daily mean. This feeds the fixed-at-200 exception below.
+    dplyr::mutate(
+      so2_1hr_max_ppb = suppressWarnings(max(so2_1hr_ppb, na.rm = TRUE))
     ) |>
     dplyr::summarise(
       .groups = "drop",
@@ -173,8 +183,9 @@ AQI <- function(
       )
     )
 
-  # Calculate AQI for each pollutant provided
-  pols <- names(dat)[-1]
+  # Calculate AQI for each pollutant provided (so2_1hr_max_ppb is the
+  # daily-max helper for the SO2 exception, not a classifiable pollutant)
+  pols <- setdiff(names(dat), c("date", "so2_1hr_max_ppb"))
   for (pol in pols) {
     if (!all_missing[[pol]]) {
       dat <- AQI_from_con(dat, pol)
@@ -186,6 +197,20 @@ AQI <- function(
   AQI_cols <- paste0("AQI_", pols)
   names(AQI_cols) <- (AQI_cols |>
     stringr::str_split("_", simplify = TRUE))[, 2]
+
+  # SO2 exception (TAD, "How do I calculate AQI values for SO2?"): on a day
+  # where the daily max 1-hour concentration is at or above 305 ppb but the
+  # 24-hour average is not, use 200 for both AQI breakpoints -- "This
+  # effectively fixes the AQI value at 200 exactly, which ensures that you
+  # get the highest possible AQI value associated with your 1-hour
+  # concentration on such days."
+  if (!all_missing$so2_1hr_ppb) {
+    exception <- !is.na(dat$so2_1hr_max_ppb) &
+      dat$so2_1hr_max_ppb >= 305 &
+      (is.na(dat$so2_24hr_ppb) | dat$so2_24hr_ppb < 305)
+    dat$AQI_so2_1hr_ppb[exception] <- 200
+    dat$cat_so2_1hr_ppb[exception] <- "Unhealthy"
+  }
 
   # Set hourly AQI to the highest of the calculated values
   dat |>

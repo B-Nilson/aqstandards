@@ -71,10 +71,25 @@ test_that("the 2024 PM2.5 breakpoints classify 9.1 ug/m3 as Moderate", {
   )
 })
 
-test_that("1-hour SO2 matches no row at or above 305 ppb and stays NA", {
-  # TAD "How do I calculate AQI values for SO2?": the upper end of the AQI
-  # uses 24-hour average concentrations; 1-hour defines nothing >= 201.
-  expect_true(is.na(AQI(Sys.time(), so2_1hr_ppb = 400)$AQI))
+test_that("SO2: the TAD's fixed-at-200 exception and the 24-hour upper end", {
+  # TAD "How do I calculate AQI values for SO2?": below 305 ppb the AQI
+  # uses the daily max 1-hour concentration; at or above a 305 ppb 24-hour
+  # average it uses the 24-hour table; and a day whose daily max 1-hour is
+  # >= 305 ppb but whose 24-hour average is not is fixed at AQI 200
+  # exactly.
+  d1 <- Sys.time()
+  # Spike day: one 400 ppb hour among 50 ppb hours -- 24-hr average
+  # 63.75 < 305, so the spike is fixed at 200 (the old code returned the
+  # 1-hour table's value for the daily mean, 87).
+  expect_equal(AQI(d1, so2_1hr_ppb = c(400, rep(50, 23)))$AQI, 200)
+  # Sustained day: 24 x 400 ppb -- 24-hr average 400 >= 305, so the
+  # 24-hour table applies (401-500 row: 232).
+  expect_equal(AQI(d1, so2_1hr_ppb = rep(400, 24))$AQI, 232)
+  # Interpretation choice (documented in NEWS): when no 24-hour average
+  # can be derived from the supplied hours (the package derives it only
+  # from >= 15 hourly values), the exception is applied conservatively --
+  # a single 400 ppb hour is fixed at 200 rather than left NA.
+  expect_equal(AQI(d1, so2_1hr_ppb = 400)$AQI, 200)
 })
 
 test_that("missing concentrations yield NA sub-indices, never zero", {

@@ -200,6 +200,54 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   package-wide validation policy remains deferred to the planned
   standards-data architecture refactor.
 
+## AQI
+
+Audit of `AQI()` against the US EPA's AQI specification (issue #5): the
+2018 Technical Assistance Document (TAD) for the Report of Daily Air
+Quality and the AirNow "AQI Equation 2024" post (effective May 6, 2024)
+that the code already cited. The package implements the current AQI
+only; the one pollutant table the 2024 revision changed (PM2.5) already
+carried the 2024 rows.
+
+- Sub-index values are now rounded to the nearest integer, per the
+  TAD's "Round the index to the nearest integer" and the 2024 post,
+  instead of ceiling() (a 1-hour O3 AQI of 147.49 is now 147, not
+  148). Half-values round up (125.5 -> 126), matching the TAD's own
+  worked example; the rule text does not state the tie direction
+  (interpretation choice).
+- The Hazardous breakpoints were restructured to the TAD's two rows
+  (301-400, 401-500) per pollutant, fixing two defects of the previous
+  merged 301-500 row: values inside 301-500 were inflated (PM2.5
+  250 ug/m3 classified as 350 instead of 325), and every concentration
+  above the 500-threshold returned a constant 301 via interpolation
+  against an invented Inf row. Above the last breakpoint row the
+  TAD's Hazardous-segment linear relationship continues (TAD FAQ;
+  PM2.5 600 ug/m3 is now 557).
+- AQI values above 500 are labelled "Beyond the AQI" from 501 (TAD:
+  "higher than 500"); the previous levels table duplicated 500 between
+  "Hazardous" (301:500) and "Beyond the AQI" (500:5000).
+- 8-hour O3 above its 0.200 ppm cap matches no breakpoint row and
+  yields NA (TAD Table 5 footnote 2: 8-hour O3 does not define AQI
+  values of 301 or above); previously a -Inf leaked from max() of an
+  all-NA selection.
+- Missing concentrations no longer map to 0: an NA concentration
+  yields an NA sub-index instead of scoring missing hours as "Good",
+  and a day with no data at all yields NA rather than AQI 0.
+- Implemented the TAD's SO2 fixed-at-200 exception: a day whose daily
+  max 1-hour concentration is at or above 305 ppb but whose 24-hour
+  average is not gets AQI exactly 200 (the daily max of the supplied
+  1-hour series is now captured for the rule). Interpretation choice:
+  when a 24-hour average cannot be derived from the supplied hours
+  (the package derives it from 15 or more hourly values), the
+  exception is applied conservatively, fixing the AQI at 200 -- "the
+  highest possible AQI value associated with your 1-hour
+  concentration" -- rather than leaving it NA.
+- Internal: sub-index classification joins breakpoint rows by row
+  index instead of category label (the TAD's two Hazardous rows share
+  one label), and the suite's previously failing blocks were unblocked
+  by replacing dplyr::across() with dplyr::c_across() in the rowwise
+  daily max (mechanical, no behaviour change).
+
 ## AQHI+
 
 First stable release of the `AQHI_plus()` public contract for downstream
