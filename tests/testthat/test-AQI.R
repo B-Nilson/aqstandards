@@ -25,7 +25,11 @@ test_that("AQI for O3 is correct", {
     o3_8hr_ppm = c(0.07853333, 0.078),
     o3_1hr_ppm = c(NA, 0.162)
   )
-  expect_equal(output$AQI, c(148, 126))
+  # Day 1: 1-hr 0.162 ppm -> 147.487; EPA TAD 2018 step d / 2024 equation
+  # post: "Round the index to the nearest integer" -> 147 (the old ceiling
+  # gave 148). Day 2: 8-hr 0.078 ppm -> 125.5, half-up tie -> 126, matching
+  # the TAD worked example's own value.
+  expect_equal(output$AQI, c(147, 126))
 })
 
 # TODO: write test

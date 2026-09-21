@@ -239,10 +239,16 @@ AQI_bp_cat <- function(obs, bps) {
   )
 }
 
-# When provided concentrations and corresponding breakpoints, return AQI
+# When provided concentrations and corresponding breakpoints, return AQI.
+# EPA TAD 2018 (step d): "Round the index to the nearest integer"; the 2024
+# equation post likewise: "The resulting AQI is rounded to the nearest whole
+# number". (The TAD's own worked example prints 148 for 147.487, but the
+# normative text of both eras says round.) Ties at .5: the sources are
+# silent, so conventional half-up rounding is the documented interpretation
+# choice (R's round() would tie-break to even).
 AQI_formulation <- function(obs, bp_low, bp_high, aqi_low, aqi_high) {
-  ceiling(
-    (aqi_high - aqi_low) / (bp_high - bp_low) * (obs - bp_low) + aqi_low
+  floor(
+    (aqi_high - aqi_low) / (bp_high - bp_low) * (obs - bp_low) + aqi_low + 0.5
   )
 }
 
