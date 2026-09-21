@@ -20,10 +20,12 @@ pkgload::load_all(quiet = TRUE, helpers = FALSE)
 # column of every fixture visible).
 options(width = 100L)
 
-# Scenario helpers (make_hours, plateau) live in
-# tests/testthat/helper-CAAQS.R, shared with the test files; source the
-# single owner so the fixture inputs run against the same helpers.
+# Scenario helpers (make_hours, plateau) and the input-handling scenarios
+# live in tests/testthat/helper-*.R, shared with the test files; source the
+# single owners so the fixture inputs run against the same definitions the
+# tests use.
 source("tests/testthat/helper-CAAQS.R")
+source("tests/testthat/helper-CAAQS-scenarios.R")
 
 expect_columns <- function(out, cols) out[, c("year", cols)]
 
@@ -661,6 +663,162 @@ fixtures$band_edge_classification <- list(
 )
 
 # ---------------------------------------------------------------------------
+# Input-handling fixtures (issue #4 matrix: non-contiguous dates, explicit
+# NA inputs, input validation). The GDADs do not legislate input handling,
+# so these expectations are behavior contracts pinned by probing; where a
+# GDAD rule does govern (the gates applied to filled rows) the citation is
+# given.
+# ---------------------------------------------------------------------------
+fixtures$noncontiguous_sparse_days <- list(
+  title = "Non-contiguous input dates: absent rows are filled, then gated",
+  rule = paste(
+    "No GDAD rule forbids sparse input: absent dates are treated as missing",
+    "hours. The NO2 GDAD (2020) Table 5-3 days criteria then gate the result:",
+    "2022 supplies only four isolated days (2022-01-15, 2022-03-03,",
+    "2022-07-09, 2022-11-28) at 40 ppb, so 4/365 days (1.1%) < 75% of days",
+    "and each quarter holds 1 day (~1%) < 60%: 2022 contributes no metric",
+    "rows. 2021/2023 are complete at 40 ppb."
+  ),
+  provenance = "GDAD",
+  input = caaqs_input_scenarios$noncontiguous_sparse_days,
+  note = paste(
+    "Rows only for 2021 and 2023, each perc_98 = 40 (the ordered daily",
+    "maxima are all 40). The all-NA 2022 hours are filled rows, not input",
+    "errors."
+  ),
+  columns = "perc_98_of_daily_maxima"
+)
+
+fixtures$noncontiguous_row_order <- list(
+  title = "Non-contiguous input dates: row order does not matter",
+  rule = paste(
+    "The pipeline re-derives calendar structure from the date column, not",
+    "from row order: a fully shuffled input produces the identical result",
+    "to the sorted equivalent. Pinned contract (no package-wide validation",
+    "policy yet); with the dense 40 ppb background all three years pass the",
+    "gates, and the annual level (40 > 7.1 ppb) is Red in every window."
+  ),
+  provenance = "PIN",
+  input = caaqs_input_scenarios$noncontiguous_row_order,
+  note = "TRUE: shuffled and sorted inputs agree row-for-row and level-for-level.",
+  columns = NULL
+)
+
+fixtures$non_hourly_spacing <- list(
+  title = "Every-second-hour sampling is tolerated, not an error",
+  rule = paste(
+    "Pinned contract (no package-wide validation policy yet): every second",
+    "hour is accepted as input. The NO2 GDAD Table 5-3 daily criterion then",
+    "does the work: each calendar day holds only 12 supplied hours",
+    "(< 18-of-24), so every day is deficient and the result is an empty",
+    "frame - tolerated input, correctly empty output."
+  ),
+  provenance = "GDAD",
+  input = caaqs_input_scenarios$non_hourly_spacing,
+  note = "A zero-row frame: no day reaches the 18-of-24 valid-hours criterion.",
+  columns = "perc_98_of_daily_maxima"
+)
+
+fixtures$duplicated_timestamps <- list(
+  title = "Duplicated timestamps are rejected",
+  rule = paste(
+    "Duplicate timestamps would silently double-count hours as extra",
+    "observations in every metric (probed pre-guard: a duplicated month at",
+    "9 ppb beside a 5 ppb background reported an annual mean of 5.3 and a",
+    "distorted 98th percentile, with no warning). The GDADs assume one",
+    "record per hourly timestamp, so CAAQS() guards its only entry point."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$duplicated_timestamps)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires unique timestamps: `dates`",
+    "contains duplicated hours."
+  )
+)
+
+fixtures$na_or_empty_timestamps <- list(
+  title = "NA and empty timestamps are rejected",
+  rule = paste(
+    "NA timestamps or a zero-length `dates` crashed the calendar machinery",
+    "pre-guard with an opaque internal error ('arguments imply differing",
+    "number of rows'). Rejected explicitly with a clear message."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$na_or_empty_timestamps)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires non-missing timestamps: `dates`",
+    "contains NA or is empty."
+  )
+)
+
+fixtures$non_datetime_dates <- list(
+  title = "Non-datetime input is rejected, naming the expected class",
+  rule = paste(
+    "Character and Date-class input previously surfaced a lubridate class",
+    "error from internal machinery or a misleading \"duplicated hours\"",
+    "error. The POSIXct class guard gives non-datetime input an explicit",
+    "contract, mirroring the one AQHI() already applies."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$non_datetime_dates)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires datetime input: `dates` must be",
+    "POSIXct."
+  )
+)
+
+fixtures$all_na_year <- list(
+  title = "An all-NA year drops out gracefully with a warning",
+  rule = paste(
+    "2022 carries no o3 values at all. The wrapper warns that 2022 is",
+    "insufficient and reports only 2021/2023 in the o3 frame: the empty-year",
+    "contract established with the NA-propagation fix (no NA rows emitted,",
+    "neighbouring years unaffected)."
+  ),
+  provenance = "PIN",
+  # The warning itself ("Insufficient data collected for pol: o3 for
+  # year(s): 2022 ...") is asserted in test-CAAQS-inputs.R; the document
+  # wrapper silences it for deterministic output.
+  input = substitute(
+    suppressWarnings(EXPR)$o3,
+    list(EXPR = caaqs_input_scenarios$all_na_year)
+  ),
+  note = paste(
+    "Rows only for 2021/2023, each fourth-highest 10 and 3-year mean NA",
+    "(two years in the 2021-2023 window)."
+  ),
+  columns = c("fourth_highest_daily_max_8hr_mean_o3", "3yr_mean")
+)
+
+fixtures$all_na_column <- list(
+  title = "An all-NA pollutant column is a clean stop, not a crash",
+  rule = paste(
+    "With the only supplied pollutant entirely NA, no pollutant has three",
+    "consecutive complete years, so the wrapper stops with its documented",
+    "message. Pinned as the contract for a fully-missing pollutant feed."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$all_na_column)
+  ),
+  note = paste(
+    "The message string: Cannot calculate CAAQS without at least one",
+    "pollutant with at least 3 years of complete data."
+  ),
+  columns = NULL
+)
+
+# ---------------------------------------------------------------------------
 ## Run every fixture and capture its exact output
 results <- list()
 for (nm in names(fixtures)) {
@@ -693,12 +851,14 @@ lines <- c(
   "and the document must be reproduced byte-for-byte.",
   "",
   "Helpers: the input blocks call two scenario helpers, owned by",
-  "`tests/testthat/helper-CAAQS.R` and shared with the package's tests;",
-  "their definitions are embedded verbatim below so every fixture is",
-  "runnable as written:",
+  "`tests/testthat/helper-CAAQS.R`, and the input-handling scenarios,
+  owned by `tests/testthat/helper-CAAQS-scenarios.R`, all shared with the",
+  "package's tests; their definitions are embedded verbatim below so every",
+  "fixture is runnable as written:",
   ""
 )
 lines <- c(lines, "```r", readLines("tests/testthat/helper-CAAQS.R"), "```", "")
+lines <- c(lines, "```r", readLines("tests/testthat/helper-CAAQS-scenarios.R"), "```", "")
 lines <- c(
   lines,
   "Coverage caveats: every completeness and exceptions criterion of the",
@@ -708,6 +868,12 @@ lines <- c(
   "exercise the identical shared code paths and differ only in the",
   "pollutant name and percentile; see fixtures no2_daily_exceedance_retention,",
   "no2_annual_row_exception and no2_50pct_quarter_exception.",
+  "",
+  "Input handling (issue #4): the GDADs legislate no input validation, so",
+  "non-contiguous dates, every-second-hour spacing, and NA inputs are pinned as",
+  "behaviour contracts (see fixtures noncontiguous_*, non_hourly_spacing,",
+  "all_na_*); duplicate, NA, and empty timestamps are rejected by explicit",
+  "guards (duplicated_timestamps, na_or_empty_timestamps).",
   "",
   "Provenance legend: **GDAD** = the expectation follows from quoted",
   "guidance-document wording (cited per fixture); **PIN** = the expectation",

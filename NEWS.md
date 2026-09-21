@@ -163,7 +163,7 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   that section's TODO placeholder) and made the README and `CAAQS()`
   examples deterministic (exact inputs instead of unseeded `sample()`).
   Added `data-raw/CAAQS-regression-fixtures.R`, whose execution writes
-  `data-raw/CAAQS-regression-fixtures.md`: a catalogue of 18
+  `data-raw/CAAQS-regression-fixtures.md`: a catalogue of
   deterministic rule-level fixtures (minimal synthetic inputs with exact
   values and dates, plus expected outputs computed by running the
   package) covering every implemented rule - daily/annual/quarterly
@@ -177,6 +177,28 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   `tests/testthat/helper-CAAQS.R`, shared with the tests), records the
   coverage caveats, and a test asserts the committed document matches a
   fresh regeneration.
+- Extended the fixture catalogue with eight input-handling fixtures (26
+  in total) and added `tests/testthat/test-CAAQS-inputs.R` for the
+  input-handling behaviour
+  the guidance documents do not legislate (the issue #4 matrix gaps):
+  non-contiguous input dates are accepted and filled, then gated by the
+  GDAD criteria; row order does not matter; two-hour (every-other-hour)
+  sampling density is tolerated (and correctly gates to an empty result);
+  an all-NA year warns and drops out; an all-NA pollutant column stops
+  with the documented message. Mismatched input lengths surface the
+  underlying recycling error (pinned, not wrapped).
+- `CAAQS()` now validates its date input where it previously failed
+  opaquely or silently: duplicated timestamps (which were silently
+  double-counted as extra observations in every metric), NA or empty
+  `dates` (previously an opaque internal error from the calendar
+  machinery), and non-datetime `dates` (previously a lubridate class
+  error, or a misleading "duplicated hours" error for Date-class input).
+  Each condition now stops with an explicit message; the POSIXct class
+  requirement mirrors the contract `AQHI()` already applies.
+  **Interpretation choice:** these are narrow guards for demonstrated
+  silent-wrong-answer or opaque-failure paths only; a broader
+  package-wide validation policy remains deferred to the planned
+  standards-data architecture refactor.
 
 ## AQHI+
 

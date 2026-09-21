@@ -8,9 +8,10 @@ committed** - regenerate with `Rscript data-raw/CAAQS-regression-fixtures.R`
 and the document must be reproduced byte-for-byte.
 
 Helpers: the input blocks call two scenario helpers, owned by
-`tests/testthat/helper-CAAQS.R` and shared with the package's tests;
-their definitions are embedded verbatim below so every fixture is
-runnable as written:
+`tests/testthat/helper-CAAQS.R`, and the input-handling scenarios,
+  owned by `tests/testthat/helper-CAAQS-scenarios.R`, all shared with the
+package's tests; their definitions are embedded verbatim below so every
+fixture is runnable as written:
 
 ```r
 # Shared scenario helpers for CAAQS tests and the regression-fixture
@@ -32,6 +33,129 @@ plateau <- function(hours, values, day, value, from = "09", to = "16") {
 }
 ```
 
+```r
+# Single owner of the input-handling scenarios (issue #4 matrix gaps:
+# non-contiguous input dates, explicit NA inputs, and date/length
+# validation). Both
+# test-CAAQS-inputs.R and data-raw/CAAQS-regression-fixtures.R consume these
+# definitions, so a scenario edited here changes the tests, the generator,
+# and the regenerated specification document together -- editing one side
+# without the other fails (the anti-rot test locks the committed .md to a
+# fresh regeneration).
+#
+# The GDADs legislate no input handling, so these are behaviour contracts
+# pinned by probing current code, not GDAD citations; where a GDAD rule
+# does govern (the gates applied to filled rows) the consuming files cite
+# it. The expressions are condition-transparent on purpose: the tests
+# assert the warning/error, and the generator adds its own
+# suppressWarnings()/tryCatch() wrappers for the document.
+
+caaqs_input_scenarios <- list(
+  # 2022 supplies only four isolated days (2022-01-15, 2022-03-03,
+  # 2022-07-09, 2022-11-28) of hourly NO2 = 40 ppb; 2021 and 2023 are
+  # complete at the same value. Absent dates are not errors: the pipeline
+  # fills them as missing. The NO2 GDAD Table 5-3 gates then do the work:
+  # 4/365 days = 1.1% of days, and every quarter holds exactly 1 day
+  # (1/90 or 1/92 = ~1%), so 2022 fails the 75%-of-days and 60%-per-quarter
+  # days criteria and contributes no metric rows.
+  noncontiguous_sparse_days = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    no2 <- rep(40, length(hours))
+    no2[hours >= lubridate::ymd_h("2022-01-01 00") &
+      hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    for (day in c("2022-01-15", "2022-03-03", "2022-07-09", "2022-11-28")) {
+      no2[hours %in% make_hours(paste0(day, " 00"), paste0(day, " 23"))] <- 40
+    }
+    CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
+  }),
+
+  # A fully shuffled input must produce the identical result to the sorted
+  # equivalent: the pipeline re-derives calendar structure from the date
+  # column, not from row order. With the dense 40 ppb background all three
+  # years pass the gates; the annual mean of 40 rounds to one decimal and
+  # the 98th percentile of the ordered daily maxima is 40, so the 3-year
+  # metric is 40 and the annual level (40 > 7.1) is Red in every window.
+  noncontiguous_row_order = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    set.seed(1) # deterministic shuffle
+    shuffled <- CAAQS_no2(
+      data.frame(date = hours[sample(seq_along(hours))], no2 = 40),
+      CAAQS_thresholds()
+    )
+    sorted <- CAAQS_no2(data.frame(date = hours, no2 = 40), CAAQS_thresholds())
+    identical(as.data.frame(shuffled), as.data.frame(sorted)) &&
+      identical(sorted$management_level_annual, c("Red", "Red", "Red"))
+  }),
+
+  # Pinned contract (no package-wide validation policy yet, see NEWS):
+  # every second hour is accepted as input. The GDAD gates then do their
+  # work on the filled frame: each calendar day holds only 12 supplied
+  # hours (< 18-of-24), so every day is deficient, no daily maximum is
+  # valid, and the result is an empty frame -- tolerated input, correctly
+  # empty output, no error.
+  non_hourly_spacing = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    h2 <- hours[seq(1, length(hours), by = 2)]
+    CAAQS_no2(
+      data.frame(date = h2, no2 = rep(10, length(h2))), CAAQS_thresholds()
+    )
+  }),
+
+  # Duplicated timestamps would silently double-count hours as extra
+  # observations in every metric (probed on the pre-guard code: a
+  # duplicated month at 9 ppb beside a 5 ppb background reported an
+  # annual mean of 5.3 and a distorted 98th percentile, with no warning),
+  # and NA or empty `dates` crashed in the calendar machinery with opaque
+  # internal errors. The GDADs assume a unique hourly record per
+  # timestamp, so CAAQS() guards both at its only entry point; the
+  # conditions are asserted in test-CAAQS-inputs.R and the generator
+  # wraps this in tryCatch() for the document.
+  duplicated_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = c(hours, hours[1]), pm25_1hr_ugm3 = rep(1, length(hours) + 1))
+  }),
+
+  na_or_empty_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    hours[[5]] <- as.POSIXct(NA)
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours)))
+  }),
+
+  # Non-datetime input (character strings, Date-class days) previously
+  # surfaced either a lubridate class error from internal machinery or a
+  # misleading "duplicated hours" error; the POSIXct class guard gives it
+  # an explicit contract, mirroring AQHI().
+  non_datetime_dates = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = as.character(hours), pm25_1hr_ugm3 = rep(1, length(hours)))
+  }),
+
+  # 2022 carries NO o3 values at all (every hour NA). The wrapper warns
+  # that 2022 is insufficient and reports only 2021/2023 in the o3 frame:
+  # the empty-year contract established when the NA-propagation defect was
+  # fixed (no NA rows emitted, 2021/2023 metrics unaffected). The warning
+  # itself ("Insufficient data collected for pol: o3 for year(s): 2022
+  # ...") is asserted in test-CAAQS-inputs.R; consumers select $o3.
+  all_na_year = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    o3 <- rep(10, length(hours))
+    o3[hours >= lubridate::ymd_h("2022-01-01 00") &
+      hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    CAAQS(
+      dates = hours, o3_1hr_ppb = o3, pm25_1hr_ugm3 = rep(1, length(hours))
+    )
+  }),
+
+  # With the only supplied pollutant entirely NA, no pollutant has three
+  # consecutive complete years, so the wrapper stops with its documented
+  # message. Pinned as the contract for a fully-missing pollutant feed.
+  all_na_column = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(NA_real_, length(hours)))
+  })
+)
+```
+
 Coverage caveats: every completeness and exceptions criterion of the
 four guidance documents has at least one fixture except three SO2 cases
 (daily-row exceedance retention, the annual-row percentile exception,
@@ -39,6 +163,12 @@ and the annual-metric-value relaxed path), omitted as NO2 twins - they
 exercise the identical shared code paths and differ only in the
 pollutant name and percentile; see fixtures no2_daily_exceedance_retention,
 no2_annual_row_exception and no2_50pct_quarter_exception.
+
+Input handling (issue #4): the GDADs legislate no input validation, so
+non-contiguous dates, every-second-hour spacing, and NA inputs are pinned as
+behaviour contracts (see fixtures noncontiguous_*, non_hourly_spacing,
+all_na_*); duplicate, NA, and empty timestamps are rejected by explicit
+guards (duplicated_timestamps, na_or_empty_timestamps).
 
 Provenance legend: **GDAD** = the expectation follows from quoted
 guidance-document wording (cited per fixture); **PIN** = the expectation
@@ -68,6 +198,14 @@ Fixture index:
 16. `pm25_daily_and_annual_gates` - PM2.5 daily 18-of-24 hours and annual 75%/60% gates (no exceptions)
 17. `pm25_rounding_cascade` - PM2.5 one-step rounding cascade (Appendix D)
 18. `band_edge_classification` - Management-level band edges (Air Zone Management GDAD Appendix 2)
+19. `noncontiguous_sparse_days` - Non-contiguous input dates: absent rows are filled, then gated
+20. `noncontiguous_row_order` - Non-contiguous input dates: row order does not matter
+21. `non_hourly_spacing` - Every-second-hour sampling is tolerated, not an error
+22. `duplicated_timestamps` - Duplicated timestamps are rejected
+23. `na_or_empty_timestamps` - NA and empty timestamps are rejected
+24. `non_datetime_dates` - Non-datetime input is rejected, naming the expected class
+25. `all_na_year` - An all-NA year drops out gracefully with a warning
+26. `all_na_column` - An all-NA pollutant column is a clean stop, not a crash
 
 ## two_of_three_metric_rule
 
@@ -742,5 +880,221 @@ Exact expected output (computed):
 # result
       62 62.00001       57     56.9       51     50.9 
 "Orange"    "Red" "Orange" "Yellow" "Yellow"  "Green" 
+```
+
+## noncontiguous_sparse_days
+
+**Non-contiguous input dates: absent rows are filled, then gated** (GDAD)
+
+Rule: No GDAD rule forbids sparse input: absent dates are treated as missing hours. The NO2 GDAD (2020) Table 5-3 days criteria then gate the result: 2022 supplies only four isolated days (2022-01-15, 2022-03-03, 2022-07-09, 2022-11-28) at 40 ppb, so 4/365 days (1.1%) < 75% of days and each quarter holds 1 day (~1%) < 60%: 2022 contributes no metric rows. 2021/2023 are complete at 40 ppb.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    no2 <- rep(40, length(hours))
+    no2[hours >= lubridate::ymd_h("2022-01-01 00") & hours < 
+        lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    for (day in c("2022-01-15", "2022-03-03", "2022-07-09", "2022-11-28")) {
+        no2[hours %in% make_hours(paste0(day, " 00"), paste0(day, 
+            " 23"))] <- 40
+    }
+    CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
+```
+
+Expected: Rows only for 2021 and 2023, each perc_98 = 40 (the ordered daily maxima are all 40). The all-NA 2022 hours are filled rows, not input errors.
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 2 × 2
+   year perc_98_of_daily_maxima
+  <dbl>                   <dbl>
+1  2021                      40
+2  2023                      40
+```
+
+## noncontiguous_row_order
+
+**Non-contiguous input dates: row order does not matter** (PIN)
+
+Rule: The pipeline re-derives calendar structure from the date column, not from row order: a fully shuffled input produces the identical result to the sorted equivalent. Pinned contract (no package-wide validation policy yet); with the dense 40 ppb background all three years pass the gates, and the annual level (40 > 7.1 ppb) is Red in every window.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    set.seed(1)
+    shuffled <- CAAQS_no2(data.frame(date = hours[sample(seq_along(hours))], 
+        no2 = 40), CAAQS_thresholds())
+    sorted <- CAAQS_no2(data.frame(date = hours, no2 = 40), CAAQS_thresholds())
+    identical(as.data.frame(shuffled), as.data.frame(sorted)) && 
+        identical(sorted$management_level_annual, c("Red", "Red", 
+            "Red"))
+```
+
+Expected: TRUE: shuffled and sorted inputs agree row-for-row and level-for-level.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] TRUE
+```
+
+## non_hourly_spacing
+
+**Every-second-hour sampling is tolerated, not an error** (GDAD)
+
+Rule: Pinned contract (no package-wide validation policy yet): every second hour is accepted as input. The NO2 GDAD Table 5-3 daily criterion then does the work: each calendar day holds only 12 supplied hours (< 18-of-24), so every day is deficient and the result is an empty frame - tolerated input, correctly empty output.
+
+Input:
+
+```r
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    h2 <- hours[seq(1, length(hours), by = 2)]
+    CAAQS_no2(data.frame(date = h2, no2 = rep(10, length(h2))), 
+        CAAQS_thresholds())
+```
+
+Expected: A zero-row frame: no day reaches the 18-of-24 valid-hours criterion.
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 0 × 2
+# ℹ 2 variables: year <dbl>, perc_98_of_daily_maxima <dbl>
+```
+
+## duplicated_timestamps
+
+**Duplicated timestamps are rejected** (PIN)
+
+Rule: Duplicate timestamps would silently double-count hours as extra observations in every metric (probed pre-guard: a duplicated month at 9 ppb beside a 5 ppb background reported an annual mean of 5.3 and a distorted 98th percentile, with no warning). The GDADs assume one record per hourly timestamp, so CAAQS() guards its only entry point.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = c(hours, hours[1]), pm25_1hr_ugm3 = rep(1, 
+        length(hours) + 1))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires unique timestamps: `dates` contains duplicated hours.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires unique timestamps: `dates` contains duplicated hours."
+```
+
+## na_or_empty_timestamps
+
+**NA and empty timestamps are rejected** (PIN)
+
+Rule: NA timestamps or a zero-length `dates` crashed the calendar machinery pre-guard with an opaque internal error ('arguments imply differing number of rows'). Rejected explicitly with a clear message.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    hours[[5]] <- as.POSIXct(NA)
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours)))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires non-missing timestamps: `dates` contains NA or is empty.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires non-missing timestamps: `dates` contains NA or is empty."
+```
+
+## non_datetime_dates
+
+**Non-datetime input is rejected, naming the expected class** (PIN)
+
+Rule: Character and Date-class input previously surfaced a lubridate class error from internal machinery or a misleading "duplicated hours" error. The POSIXct class guard gives non-datetime input an explicit contract, mirroring the one AQHI() already applies.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = as.character(hours), pm25_1hr_ugm3 = rep(1, 
+        length(hours)))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires datetime input: `dates` must be POSIXct.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires datetime input: `dates` must be POSIXct."
+```
+
+## all_na_year
+
+**An all-NA year drops out gracefully with a warning** (PIN)
+
+Rule: 2022 carries no o3 values at all. The wrapper warns that 2022 is insufficient and reports only 2021/2023 in the o3 frame: the empty-year contract established with the NA-propagation fix (no NA rows emitted, neighbouring years unaffected).
+
+Input:
+
+```r
+suppressWarnings({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    o3 <- rep(10, length(hours))
+    o3[hours >= lubridate::ymd_h("2022-01-01 00") & hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
+    CAAQS(dates = hours, o3_1hr_ppb = o3, pm25_1hr_ugm3 = rep(1, 
+        length(hours)))
+})$o3
+```
+
+Expected: Rows only for 2021/2023, each fourth-highest 10 and 3-year mean NA (two years in the 2021-2023 window).
+
+Exact expected output (computed):
+
+```r
+# result
+# A tibble: 2 × 3
+   year fourth_highest_daily_max_8hr_mean_o3 `3yr_mean`
+  <dbl>                                <dbl>      <dbl>
+1  2021                                   10         NA
+2  2023                                   10         NA
+```
+
+## all_na_column
+
+**An all-NA pollutant column is a clean stop, not a crash** (PIN)
+
+Rule: With the only supplied pollutant entirely NA, no pollutant has three consecutive complete years, so the wrapper stops with its documented message. Pinned as the contract for a fully-missing pollutant feed.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(NA_real_, length(hours)))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: Cannot calculate CAAQS without at least one pollutant with at least 3 years of complete data.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "Cannot calculate CAAQS without at least one pollutant with at least 3 years of complete data."
 ```
 
