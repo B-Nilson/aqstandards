@@ -31,9 +31,10 @@ test_that("non-contiguous input dates: date order does not matter", {
   expect_true(eval(caaqs_input_scenarios$noncontiguous_row_order))
 })
 
-test_that("non-hourly spacing: sub-hourly sampling density is tolerated, not an error", {
+test_that("non-hourly spacing: every-second-hour sampling is tolerated, not an error", {
   # Pinned contract (no package-wide validation policy yet, see NEWS):
-  # every second hour is accepted as input. The GDAD gates then do their
+  # two-hour (every-other-hour) sampling is accepted as input. The GDAD
+  # gates then do their
   # work on the filled frame: each calendar day holds only 12 supplied
   # hours (< 18-of-24), so every day is deficient and the result is an
   # empty frame -- tolerated input, correctly empty output, no error.
@@ -41,6 +42,45 @@ test_that("non-hourly spacing: sub-hourly sampling density is tolerated, not an 
     out <- eval(caaqs_input_scenarios$non_hourly_spacing)
   )
   expect_identical(nrow(as.data.frame(out)), 0L)
+})
+
+test_that("date validation: duplicated timestamps are rejected, not double-counted", {
+  # Probed on the pre-guard code: a duplicated month at 9 ppb beside a
+  # 5 ppb background reported an annual mean of 5.3 and a distorted 98th
+  # percentile with no warning -- duplicates silently double-counted as
+  # extra observations. The GDADs assume one record per hourly timestamp,
+  # so CAAQS() guards its only entry point.
+  expect_error(
+    eval(caaqs_input_scenarios$duplicated_timestamps),
+    "requires unique timestamps: `dates` contains duplicated hours"
+  )
+})
+
+test_that("date validation: NA and empty timestamps are rejected with a clear message", {
+  # Probed pre-guard: both crashed the calendar machinery with opaque
+  # internal errors ('arguments imply differing number of rows: 0, 4').
+  hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+  hours[[5]] <- as.POSIXct(NA)
+  expect_error(
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours))),
+    "requires non-missing timestamps: `dates` contains NA or is empty"
+  )
+  expect_error(
+    CAAQS(dates = as.POSIXct(character(0)), pm25_1hr_ugm3 = numeric(0)),
+    "requires non-missing timestamps: `dates` contains NA or is empty"
+  )
+})
+
+test_that("date validation: non-datetime input is rejected, naming the expected class", {
+  # Probed pre-guard: character input surfaced a lubridate 'Unsupported
+  # date-time class' error from internal machinery, and Date-class input
+  # collapsed every hour of a day onto one timestamp and surfaced as a
+  # misleading "duplicated hours" error. The explicit class guard mirrors
+  # the contract AQHI() already applies.
+  expect_error(
+    eval(caaqs_input_scenarios$non_datetime_dates),
+    "requires datetime input: `dates` must be POSIXct"
+  )
 })
 
 test_that("NA inputs: an all-NA year drops out gracefully with a warning, not an error", {

@@ -34,8 +34,9 @@ plateau <- function(hours, values, day, value, from = "09", to = "16") {
 ```
 
 ```r
-# Single owner of the five input-handling scenarios (issue #4 matrix gaps:
-# non-contiguous input dates, explicit NA inputs, input validation). Both
+# Single owner of the input-handling scenarios (issue #4 matrix gaps:
+# non-contiguous input dates, explicit NA inputs, and date/length
+# validation). Both
 # test-CAAQS-inputs.R and data-raw/CAAQS-regression-fixtures.R consume these
 # definitions, so a scenario edited here changes the tests, the generator,
 # and the regenerated specification document together -- editing one side
@@ -100,6 +101,35 @@ caaqs_input_scenarios <- list(
     )
   }),
 
+  # Duplicated timestamps would silently double-count hours as extra
+  # observations in every metric (probed on the pre-guard code: a
+  # duplicated month at 9 ppb beside a 5 ppb background reported an
+  # annual mean of 5.3 and a distorted 98th percentile, with no warning),
+  # and NA or empty `dates` crashed in the calendar machinery with opaque
+  # internal errors. The GDADs assume a unique hourly record per
+  # timestamp, so CAAQS() guards both at its only entry point; the
+  # conditions are asserted in test-CAAQS-inputs.R and the generator
+  # wraps this in tryCatch() for the document.
+  duplicated_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = c(hours, hours[1]), pm25_1hr_ugm3 = rep(1, length(hours) + 1))
+  }),
+
+  na_or_empty_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    hours[[5]] <- as.POSIXct(NA)
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours)))
+  }),
+
+  # Non-datetime input (character strings, Date-class days) previously
+  # surfaced either a lubridate class error from internal machinery or a
+  # misleading "duplicated hours" error; the POSIXct class guard gives it
+  # an explicit contract, mirroring AQHI().
+  non_datetime_dates = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = as.character(hours), pm25_1hr_ugm3 = rep(1, length(hours)))
+  }),
+
   # 2022 carries NO o3 values at all (every hour NA). The wrapper warns
   # that 2022 is insufficient and reports only 2021/2023 in the o3 frame:
   # the empty-year contract established when the NA-propagation defect was
@@ -135,9 +165,10 @@ pollutant name and percentile; see fixtures no2_daily_exceedance_retention,
 no2_annual_row_exception and no2_50pct_quarter_exception.
 
 Input handling (issue #4): the GDADs legislate no input validation, so
-non-contiguous dates, sub-hourly spacing, and NA inputs are pinned as
+non-contiguous dates, every-second-hour spacing, and NA inputs are pinned as
 behaviour contracts (see fixtures noncontiguous_*, non_hourly_spacing,
-all_na_*).
+all_na_*); duplicate, NA, and empty timestamps are rejected by explicit
+guards (duplicated_timestamps, na_or_empty_timestamps).
 
 Provenance legend: **GDAD** = the expectation follows from quoted
 guidance-document wording (cited per fixture); **PIN** = the expectation
@@ -169,9 +200,12 @@ Fixture index:
 18. `band_edge_classification` - Management-level band edges (Air Zone Management GDAD Appendix 2)
 19. `noncontiguous_sparse_days` - Non-contiguous input dates: absent rows are filled, then gated
 20. `noncontiguous_row_order` - Non-contiguous input dates: row order does not matter
-21. `non_hourly_spacing` - Sub-hourly sampling density is tolerated, not an error
-22. `all_na_year` - An all-NA year drops out gracefully with a warning
-23. `all_na_column` - An all-NA pollutant column is a clean stop, not a crash
+21. `non_hourly_spacing` - Every-second-hour sampling is tolerated, not an error
+22. `duplicated_timestamps` - Duplicated timestamps are rejected
+23. `na_or_empty_timestamps` - NA and empty timestamps are rejected
+24. `non_datetime_dates` - Non-datetime input is rejected, naming the expected class
+25. `all_na_year` - An all-NA year drops out gracefully with a warning
+26. `all_na_column` - An all-NA pollutant column is a clean stop, not a crash
 
 ## two_of_three_metric_rule
 
@@ -911,7 +945,7 @@ Exact expected output (computed):
 
 ## non_hourly_spacing
 
-**Sub-hourly sampling density is tolerated, not an error** (GDAD)
+**Every-second-hour sampling is tolerated, not an error** (GDAD)
 
 Rule: Pinned contract (no package-wide validation policy yet): every second hour is accepted as input. The NO2 GDAD Table 5-3 daily criterion then does the work: each calendar day holds only 12 supplied hours (< 18-of-24), so every day is deficient and the result is an empty frame - tolerated input, correctly empty output.
 
@@ -932,6 +966,81 @@ Exact expected output (computed):
 # result
 # A tibble: 0 × 2
 # ℹ 2 variables: year <dbl>, perc_98_of_daily_maxima <dbl>
+```
+
+## duplicated_timestamps
+
+**Duplicated timestamps are rejected** (PIN)
+
+Rule: Duplicate timestamps would silently double-count hours as extra observations in every metric (probed pre-guard: a duplicated month at 9 ppb beside a 5 ppb background reported an annual mean of 5.3 and a distorted 98th percentile, with no warning). The GDADs assume one record per hourly timestamp, so CAAQS() guards its only entry point.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = c(hours, hours[1]), pm25_1hr_ugm3 = rep(1, 
+        length(hours) + 1))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires unique timestamps: `dates` contains duplicated hours.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires unique timestamps: `dates` contains duplicated hours."
+```
+
+## na_or_empty_timestamps
+
+**NA and empty timestamps are rejected** (PIN)
+
+Rule: NA timestamps or a zero-length `dates` crashed the calendar machinery pre-guard with an opaque internal error ('arguments imply differing number of rows'). Rejected explicitly with a clear message.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    hours[[5]] <- as.POSIXct(NA)
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours)))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires non-missing timestamps: `dates` contains NA or is empty.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires non-missing timestamps: `dates` contains NA or is empty."
+```
+
+## non_datetime_dates
+
+**Non-datetime input is rejected, naming the expected class** (PIN)
+
+Rule: Character and Date-class input previously surfaced a lubridate class error from internal machinery or a misleading "duplicated hours" error. The POSIXct class guard gives non-datetime input an explicit contract, mirroring the one AQHI() already applies.
+
+Input:
+
+```r
+tryCatch({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = as.character(hours), pm25_1hr_ugm3 = rep(1, 
+        length(hours)))
+}, error = function(e) conditionMessage(e))
+```
+
+Expected: The message string: CAAQS() requires datetime input: `dates` must be POSIXct.
+
+Exact expected output (computed):
+
+```r
+# result
+[1] "CAAQS() requires datetime input: `dates` must be POSIXct."
 ```
 
 ## all_na_year

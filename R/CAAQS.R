@@ -98,6 +98,24 @@ CAAQS <- function(
   no2_1hr_ppb = NULL,
   so2_1hr_ppb = NULL
 ) {
+  # Input guards: non-datetime, NA/absent, and duplicated timestamps
+  # otherwise fail opaquely (deep inside the calendar machinery) or, worse,
+  # silently double-count duplicated hours as extra observations in every
+  # metric (Date-class input, for instance, collapses each day onto one
+  # timestamp and surfaced as a misleading "duplicated hours" error). The
+  # GDADs assume a unique record per hourly POSIXct timestamp, so enforce
+  # it here, once, at the only entry point -- the same contract `AQHI()`
+  # already applies.
+  if (!inherits(dates, "POSIXct")) {
+    stop("CAAQS() requires datetime input: `dates` must be POSIXct.")
+  }
+  if (!isTRUE(all(!is.na(dates))) || length(dates) == 0L) {
+    stop("CAAQS() requires non-missing timestamps: `dates` contains NA or is empty.")
+  }
+  if (dplyr::n_distinct(dates) != length(dates)) {
+    stop("CAAQS() requires unique timestamps: `dates` contains duplicated hours.")
+  }
+
   # Join inputs
   obs <- dplyr::bind_cols(
     date = dates,

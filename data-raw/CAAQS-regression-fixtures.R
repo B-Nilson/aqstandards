@@ -705,7 +705,7 @@ fixtures$noncontiguous_row_order <- list(
 )
 
 fixtures$non_hourly_spacing <- list(
-  title = "Sub-hourly sampling density is tolerated, not an error",
+  title = "Every-second-hour sampling is tolerated, not an error",
   rule = paste(
     "Pinned contract (no package-wide validation policy yet): every second",
     "hour is accepted as input. The NO2 GDAD Table 5-3 daily criterion then",
@@ -717,6 +717,63 @@ fixtures$non_hourly_spacing <- list(
   input = caaqs_input_scenarios$non_hourly_spacing,
   note = "A zero-row frame: no day reaches the 18-of-24 valid-hours criterion.",
   columns = "perc_98_of_daily_maxima"
+)
+
+fixtures$duplicated_timestamps <- list(
+  title = "Duplicated timestamps are rejected",
+  rule = paste(
+    "Duplicate timestamps would silently double-count hours as extra",
+    "observations in every metric (probed pre-guard: a duplicated month at",
+    "9 ppb beside a 5 ppb background reported an annual mean of 5.3 and a",
+    "distorted 98th percentile, with no warning). The GDADs assume one",
+    "record per hourly timestamp, so CAAQS() guards its only entry point."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$duplicated_timestamps)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires unique timestamps: `dates`",
+    "contains duplicated hours."
+  )
+)
+
+fixtures$na_or_empty_timestamps <- list(
+  title = "NA and empty timestamps are rejected",
+  rule = paste(
+    "NA timestamps or a zero-length `dates` crashed the calendar machinery",
+    "pre-guard with an opaque internal error ('arguments imply differing",
+    "number of rows'). Rejected explicitly with a clear message."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$na_or_empty_timestamps)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires non-missing timestamps: `dates`",
+    "contains NA or is empty."
+  )
+)
+
+fixtures$non_datetime_dates <- list(
+  title = "Non-datetime input is rejected, naming the expected class",
+  rule = paste(
+    "Character and Date-class input previously surfaced a lubridate class",
+    "error from internal machinery or a misleading \"duplicated hours\"",
+    "error. The POSIXct class guard gives non-datetime input an explicit",
+    "contract, mirroring the one AQHI() already applies."
+  ),
+  provenance = "PIN",
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$non_datetime_dates)
+  ),
+  note = paste(
+    "The message string: CAAQS() requires datetime input: `dates` must be",
+    "POSIXct."
+  )
 )
 
 fixtures$all_na_year <- list(
@@ -813,9 +870,10 @@ lines <- c(
   "no2_annual_row_exception and no2_50pct_quarter_exception.",
   "",
   "Input handling (issue #4): the GDADs legislate no input validation, so",
-  "non-contiguous dates, sub-hourly spacing, and NA inputs are pinned as",
+  "non-contiguous dates, every-second-hour spacing, and NA inputs are pinned as",
   "behaviour contracts (see fixtures noncontiguous_*, non_hourly_spacing,",
-  "all_na_*).",
+  "all_na_*); duplicate, NA, and empty timestamps are rejected by explicit",
+  "guards (duplicated_timestamps, na_or_empty_timestamps).",
   "",
   "Provenance legend: **GDAD** = the expectation follows from quoted",
   "guidance-document wording (cited per fixture); **PIN** = the expectation",

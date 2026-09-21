@@ -1,5 +1,6 @@
-# Single owner of the five input-handling scenarios (issue #4 matrix gaps:
-# non-contiguous input dates, explicit NA inputs, input validation). Both
+# Single owner of the input-handling scenarios (issue #4 matrix gaps:
+# non-contiguous input dates, explicit NA inputs, and date/length
+# validation). Both
 # test-CAAQS-inputs.R and data-raw/CAAQS-regression-fixtures.R consume these
 # definitions, so a scenario edited here changes the tests, the generator,
 # and the regenerated specification document together -- editing one side
@@ -62,6 +63,35 @@ caaqs_input_scenarios <- list(
     CAAQS_no2(
       data.frame(date = h2, no2 = rep(10, length(h2))), CAAQS_thresholds()
     )
+  }),
+
+  # Duplicated timestamps would silently double-count hours as extra
+  # observations in every metric (probed on the pre-guard code: a
+  # duplicated month at 9 ppb beside a 5 ppb background reported an
+  # annual mean of 5.3 and a distorted 98th percentile, with no warning),
+  # and NA or empty `dates` crashed in the calendar machinery with opaque
+  # internal errors. The GDADs assume a unique hourly record per
+  # timestamp, so CAAQS() guards both at its only entry point; the
+  # conditions are asserted in test-CAAQS-inputs.R and the generator
+  # wraps this in tryCatch() for the document.
+  duplicated_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = c(hours, hours[1]), pm25_1hr_ugm3 = rep(1, length(hours) + 1))
+  }),
+
+  na_or_empty_timestamps = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    hours[[5]] <- as.POSIXct(NA)
+    CAAQS(dates = hours, pm25_1hr_ugm3 = rep(1, length(hours)))
+  }),
+
+  # Non-datetime input (character strings, Date-class days) previously
+  # surfaced either a lubridate class error from internal machinery or a
+  # misleading "duplicated hours" error; the POSIXct class guard gives it
+  # an explicit contract, mirroring AQHI().
+  non_datetime_dates = quote({
+    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
+    CAAQS(dates = as.character(hours), pm25_1hr_ugm3 = rep(1, length(hours)))
   }),
 
   # 2022 carries NO o3 values at all (every hour NA). The wrapper warns
