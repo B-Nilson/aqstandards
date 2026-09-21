@@ -346,16 +346,15 @@ AQI_from_con <- function(dat, pol) {
   }
   # "Beyond the AQI" rows (bp_high = Inf): per the TAD FAQ, concentrations
   # above the Hazardous range "use the same linear relationship that is
-  # used for the Hazardous category" -- so extend the final closed
-  # segment's slope through the open row.
+  # used for the Hazardous category" -- i.e. the last closed segment's
+  # line, anchored at its (bp_low, aqi_low) so the AQI is continuous at
+  # 500 and unbounded above. (Extending the open row from its own bp_low
+  # instead leaves a ~1-point discontinuity and a finite cap where the
+  # TAD says the relationship continues.) The row is left in the table
+  # for classification (obs <= Inf matches everything above its bp_low);
+  # the interpolation parameters are substituted after the join.
   is_open <- is.infinite(bps$bp_high)
-  if (any(is_open)) {
-    last_closed <- max(which(!is_open))
-    bps$bp_high[is_open] <-
-      bps$bp_low[is_open] + (bps$bp_high[last_closed] - bps$bp_low[last_closed])
-    bps$aqi_high[is_open] <-
-      bps$aqi_low[is_open] + (bps$aqi_high[last_closed] - bps$aqi_low[last_closed])
-  }
+  last_closed <- if (any(is_open)) max(which(!is_open)) else NA_integer_
   # Classify each concentration into one breakpoint row. Missing values
   # stay missing (an NA concentration is an NA sub-index, never 0), and
   # values in a TAD table's "blank place" (a gap between rows, e.g. 8-hour
@@ -379,6 +378,34 @@ AQI_from_con <- function(dat, pol) {
     )
   # Rename the joined row label for provenance and calculate the sub-index
   dat <- dat |> dplyr::rename(!!paste0("cat_", pol) := risk_category)
+  # Substitute the Beyond-the-AQI interpolation parameters: the joined
+  # open row carries Inf placeholders, but per the TAD FAQ the AQI must
+  # follow the last closed segment's LINE, so the beyond rows interpolate
+  # on that line: anchored at the segment's (bp_low, aqi_low) with the
+  # segment's slope preserved -- aqi_high is the line's value at the
+  # extended bp_high. Anchoring the high end at the open row's own 501
+  # instead would tilt the slope and leave a +1 step at the 500 row edge.
+  if (!is.na(last_closed)) {
+    open_row <- which(is_open)
+    ext_bp_high <- bps$bp_low[open_row] +
+      (bps$bp_high[last_closed] - bps$bp_low[last_closed])
+    subs <- list(
+      bp_low = bps$bp_low[last_closed],
+      bp_high = ext_bp_high,
+      aqi_low = bps$aqi_low[last_closed],
+      aqi_high = bps$aqi_low[last_closed] +
+        (bps$aqi_high[last_closed] - bps$aqi_low[last_closed]) *
+          (ext_bp_high - bps$bp_low[last_closed]) /
+          (bps$bp_high[last_closed] - bps$bp_low[last_closed])
+    )
+    is_beyond <- which(
+      !is.na(dat[[paste0("bp_row_", pol)]]) &
+        dat[[paste0("bp_row_", pol)]] == open_row
+    )
+    for (nm in names(subs)) {
+      dat[[paste0(nm, "_", pol)]][is_beyond] <- subs[[nm]]
+    }
+  }
   dat[[paste0("AQI_", pol)]] <- AQI_formulation(
     obs = dat[[pol]],
     bp_low = dat[[paste0("bp_low_", pol)]],

@@ -42,10 +42,14 @@ test_that("Hazardous interpolation follows the TAD's two 301-400 / 401-500 segme
 test_that("Beyond-the-AQI concentrations continue the final Hazardous segment", {
   # TAD FAQ: "an AQI value can still be computed ... use the same linear
   # relationship that is used for the Hazardous category." PM2.5 600 ug/m3
-  # extends 325.5-500.4 -> 401-500: 556.51 -> 557 (the old code returned a
+  # continues the 325.5-500.4 -> 401-500 segment LINE from its low anchor:
+  # 401 + (600-325.5)/174.9*99 = 556.4 -> 556 (the old code returned a
   # constant 301 for every concentration above the table).
+  # Continuity: the extension is anchored at the segment low end, so 500.5
+  # ug/m3 interpolates to 500 -- no +1 step at the 500 boundary. The AQI
+  # is unbounded: 700 ug/m3 -> 401 + (700-325.5)/174.9*99 = 613.
   out <- AQI(Sys.time(), pm25_24hr_ugm3 = 600)
-  expect_equal(out$AQI, 557)
+  expect_equal(out$AQI, 556)
   # "Beyond the AQI" is defined for AQI higher than 500 (TAD FAQ), so 500
   # itself is still Hazardous and the 501 boundary is not duplicated.
   expect_identical(as.character(out$risk_category), "Beyond the AQI")
