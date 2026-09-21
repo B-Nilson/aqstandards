@@ -20,10 +20,12 @@ pkgload::load_all(quiet = TRUE, helpers = FALSE)
 # column of every fixture visible).
 options(width = 100L)
 
-# Scenario helpers (make_hours, plateau) live in
-# tests/testthat/helper-CAAQS.R, shared with the test files; source the
-# single owner so the fixture inputs run against the same helpers.
+# Scenario helpers (make_hours, plateau) and the input-handling scenarios
+# live in tests/testthat/helper-*.R, shared with the test files; source the
+# single owners so the fixture inputs run against the same definitions the
+# tests use.
 source("tests/testthat/helper-CAAQS.R")
+source("tests/testthat/helper-CAAQS-scenarios.R")
 
 expect_columns <- function(out, cols) out[, c("year", cols)]
 
@@ -678,16 +680,7 @@ fixtures$noncontiguous_sparse_days <- list(
     "rows. 2021/2023 are complete at 40 ppb."
   ),
   provenance = "GDAD",
-  input = substitute({
-    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
-    no2 <- rep(40, length(hours))
-    no2[hours >= lubridate::ymd_h("2022-01-01 00") &
-          hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
-    for (day in c("2022-01-15", "2022-03-03", "2022-07-09", "2022-11-28")) {
-      no2[hours %in% make_hours(paste0(day, " 00"), paste0(day, " 23"))] <- 40
-    }
-    CAAQS_no2(data.frame(date = hours, no2 = no2), CAAQS_thresholds())
-  }),
+  input = caaqs_input_scenarios$noncontiguous_sparse_days,
   note = paste(
     "Rows only for 2021 and 2023, each perc_98 = 40 (the ordered daily",
     "maxima are all 40). The all-NA 2022 hours are filled rows, not input",
@@ -706,17 +699,7 @@ fixtures$noncontiguous_row_order <- list(
     "gates, and the annual level (40 > 7.1 ppb) is Red in every window."
   ),
   provenance = "PIN",
-  input = substitute({
-    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
-    set.seed(1) # deterministic shuffle
-    shuffled <- CAAQS_no2(
-      data.frame(date = hours[sample(seq_along(hours))], no2 = 40),
-      CAAQS_thresholds()
-    )
-    sorted <- CAAQS_no2(data.frame(date = hours, no2 = 40), CAAQS_thresholds())
-    identical(as.data.frame(shuffled), as.data.frame(sorted)) &&
-      identical(sorted$management_level_annual, c("Red", "Red", "Red"))
-  }),
+  input = caaqs_input_scenarios$noncontiguous_row_order,
   note = "TRUE: shuffled and sorted inputs agree row-for-row and level-for-level.",
   columns = NULL
 )
@@ -731,11 +714,7 @@ fixtures$non_hourly_spacing <- list(
     "frame - tolerated input, correctly empty output."
   ),
   provenance = "GDAD",
-  input = substitute({
-    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
-    h2 <- hours[seq(1, length(hours), by = 2)]
-    CAAQS_no2(data.frame(date = h2, no2 = rep(10, length(h2))), CAAQS_thresholds())
-  }),
+  input = caaqs_input_scenarios$non_hourly_spacing,
   note = "A zero-row frame: no day reaches the 18-of-24 valid-hours criterion.",
   columns = "perc_98_of_daily_maxima"
 )
@@ -749,17 +728,13 @@ fixtures$all_na_year <- list(
     "neighbouring years unaffected)."
   ),
   provenance = "PIN",
-  input = substitute({
-    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
-    o3 <- rep(10, length(hours))
-    o3[hours >= lubridate::ymd_h("2022-01-01 00") &
-          hours < lubridate::ymd_h("2023-01-01 00")] <- NA_real_
-    # The warning itself ("Insufficient data collected for pol: o3 for
-    # year(s): 2022 ...") is asserted in test-CAAQS-inputs.R.
-    suppressWarnings(CAAQS(
-      dates = hours, o3_1hr_ppb = o3, pm25_1hr_ugm3 = rep(1, length(hours))
-    )$o3)
-  }),
+  # The warning itself ("Insufficient data collected for pol: o3 for
+  # year(s): 2022 ...") is asserted in test-CAAQS-inputs.R; the document
+  # wrapper silences it for deterministic output.
+  input = substitute(
+    suppressWarnings(EXPR)$o3,
+    list(EXPR = caaqs_input_scenarios$all_na_year)
+  ),
   note = paste(
     "Rows only for 2021/2023, each fourth-highest 10 and 3-year mean NA",
     "(two years in the 2021-2023 window)."
@@ -775,13 +750,10 @@ fixtures$all_na_column <- list(
     "message. Pinned as the contract for a fully-missing pollutant feed."
   ),
   provenance = "PIN",
-  input = substitute({
-    hours <- make_hours("2021-01-01 00", "2023-12-31 23")
-    tryCatch(
-      CAAQS(dates = hours, pm25_1hr_ugm3 = rep(NA_real_, length(hours))),
-      error = function(e) conditionMessage(e)
-    )
-  }),
+  input = substitute(
+    tryCatch(EXPR, error = function(e) conditionMessage(e)),
+    list(EXPR = caaqs_input_scenarios$all_na_column)
+  ),
   note = paste(
     "The message string: Cannot calculate CAAQS without at least one",
     "pollutant with at least 3 years of complete data."
@@ -822,12 +794,14 @@ lines <- c(
   "and the document must be reproduced byte-for-byte.",
   "",
   "Helpers: the input blocks call two scenario helpers, owned by",
-  "`tests/testthat/helper-CAAQS.R` and shared with the package's tests;",
-  "their definitions are embedded verbatim below so every fixture is",
-  "runnable as written:",
+  "`tests/testthat/helper-CAAQS.R`, and the input-handling scenarios,
+  owned by `tests/testthat/helper-CAAQS-scenarios.R`, all shared with the",
+  "package's tests; their definitions are embedded verbatim below so every",
+  "fixture is runnable as written:",
   ""
 )
 lines <- c(lines, "```r", readLines("tests/testthat/helper-CAAQS.R"), "```", "")
+lines <- c(lines, "```r", readLines("tests/testthat/helper-CAAQS-scenarios.R"), "```", "")
 lines <- c(
   lines,
   "Coverage caveats: every completeness and exceptions criterion of the",

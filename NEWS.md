@@ -163,7 +163,7 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   that section's TODO placeholder) and made the README and `CAAQS()`
   examples deterministic (exact inputs instead of unseeded `sample()`).
   Added `data-raw/CAAQS-regression-fixtures.R`, whose execution writes
-  `data-raw/CAAQS-regression-fixtures.md`: a catalogue of 18
+  `data-raw/CAAQS-regression-fixtures.md`: a catalogue of
   deterministic rule-level fixtures (minimal synthetic inputs with exact
   values and dates, plus expected outputs computed by running the
   package) covering every implemented rule - daily/annual/quarterly
@@ -177,8 +177,9 @@ and 17/12 ppb annual, SO2 70/65 ppb hourly and 5/4 ppb annual for
   `tests/testthat/helper-CAAQS.R`, shared with the tests), records the
   coverage caveats, and a test asserts the committed document matches a
   fresh regeneration.
-- Extended the fixture catalogue to 23 fixtures and added
-  `tests/testthat/test-CAAQS-inputs.R` for the input-handling behaviour
+- Extended the fixture catalogue with five input-handling fixtures (23
+  in total) and added `tests/testthat/test-CAAQS-inputs.R` for the
+  input-handling behaviour
   the guidance documents do not legislate (the issue #4 matrix gaps):
   non-contiguous input dates are accepted and filled, then gated by the
   GDAD criteria; row order does not matter; sub-hourly sampling density
