@@ -112,8 +112,7 @@ AQI <- function(
     !all_missing$o3_1hr_ppm &
     sum(!is.na(dat$o3_1hr_ppm)) >= 5
   if (needs_o3_8hr) {
-    dat$o3_8hr_ppm <- dat$o3_1hr_ppm |>
-      handyr::rolling("mean", .width = 8, .min_non_na = 5)
+    dat$o3_8hr_ppm <- AQI_o3_8hr_from_1hr(dat$date, dat$o3_1hr_ppm)
     all_missing$o3_8hr_ppm <- FALSE
   }
   needs_pm25_24hr <- all_missing$pm25_24hr_ugm3 &
@@ -184,18 +183,25 @@ AQI <- function(
         \(x) suppressWarnings(max(x, na.rm = TRUE))
       )
     ) |>
-    # Truncate daily means
+    # Truncate daily means (TAD step (a), "Truncate ... to the number of
+    # decimal places shown in the breakpoint table"). Each pollutant's
+    # digits are the decimal places of its table's bp values: O3 3, PM2.5
+    # and CO 1, PM10/SO2/NO2 0. CAUTION: tidyselect's starts_with() takes
+    # one pattern PER PREFIX, not a single regex/piped string --
+    # starts_with("pm25|co") is a literal-prefix match that selects
+    # nothing and silently disabled these truncations (defect fixed with
+    # tests in the issue-#6 suite).
     dplyr::mutate(
       dplyr::across(
         dplyr::starts_with("o3"),
         \(x) handyr::truncate(x, digits = 3)
       ),
       dplyr::across(
-        dplyr::starts_with("pm25|co"),
+        dplyr::starts_with(c("pm25", "co")),
         \(x) handyr::truncate(x, digits = 1)
       ),
       dplyr::across(
-        dplyr::starts_with("so2|no2|pm10"),
+        dplyr::starts_with(c("so2", "no2", "pm10")),
         \(x) handyr::truncate(x, digits = 0)
       )
     )
@@ -303,6 +309,30 @@ AQI_formulation <- function(obs, bp_low, bp_high, aqi_low, aqi_high) {
   )
 }
 
+# Derive 8-hour averages from the 1-hour O3 series when a caller supplies
+# hourly values. TAD FAQ: the daily maximum 8-hour average "is based on the
+# 17 consecutive moving 8-hour periods in each day, beginning with the
+# 8-hour period from 7am to 3pm, and ending with the 8-hour period from
+# 11pm to 7am", changed with the 2015 ozone standard "to avoid
+# double-counting an exceedance from a single, short-term episode that
+# spans the nighttime hours of the first day into the early hours of the
+# second day". Each window is identified by its START hour (7am-11pm), so
+# a start hour's value is the mean of the following 8 hourly values and
+# non-start hours (00:00-06:00) are not computed windows: a window
+# spilling past midnight belongs to the previous day's start hour, and
+# keeping end-attributed values would re-attribute such an episode to the
+# wrong day. Windows require >= 5 valid of 8 hours (pre-existing tolerance,
+# documented).
+AQI_o3_8hr_from_1hr <- function(dates, x, start_hours = 7:23) {
+  forward_windows <- suppressWarnings(
+    handyr::rolling(x, "mean", .width = 8, .direction = "forward", .min_non_na = 5)
+  )
+  out <- rep(NA_real_, length(x))
+  keep <- as.integer(format(dates, "%H")) %in% start_hours
+  out[keep] <- forward_windows[keep]
+  out
+}
+
 # Workhorse function to classify concentrations into breakpoint rows,
 # append the corresponding breakpoints, and calculate the AQI sub-index
 AQI_from_con <- function(dat, pol) {
@@ -316,16 +346,15 @@ AQI_from_con <- function(dat, pol) {
   }
   # "Beyond the AQI" rows (bp_high = Inf): per the TAD FAQ, concentrations
   # above the Hazardous range "use the same linear relationship that is
-  # used for the Hazardous category" -- so extend the final closed
-  # segment's slope through the open row.
+  # used for the Hazardous category" -- i.e. the last closed segment's
+  # line, anchored at its (bp_low, aqi_low) so the AQI is continuous at
+  # 500 and unbounded above. (Extending the open row from its own bp_low
+  # instead leaves a ~1-point discontinuity and a finite cap where the
+  # TAD says the relationship continues.) The row is left in the table
+  # for classification (obs <= Inf matches everything above its bp_low);
+  # the interpolation parameters are substituted after the join.
   is_open <- is.infinite(bps$bp_high)
-  if (any(is_open)) {
-    last_closed <- max(which(!is_open))
-    bps$bp_high[is_open] <-
-      bps$bp_low[is_open] + (bps$bp_high[last_closed] - bps$bp_low[last_closed])
-    bps$aqi_high[is_open] <-
-      bps$aqi_low[is_open] + (bps$aqi_high[last_closed] - bps$aqi_low[last_closed])
-  }
+  last_closed <- if (any(is_open)) max(which(!is_open)) else NA_integer_
   # Classify each concentration into one breakpoint row. Missing values
   # stay missing (an NA concentration is an NA sub-index, never 0), and
   # values in a TAD table's "blank place" (a gap between rows, e.g. 8-hour
@@ -349,6 +378,34 @@ AQI_from_con <- function(dat, pol) {
     )
   # Rename the joined row label for provenance and calculate the sub-index
   dat <- dat |> dplyr::rename(!!paste0("cat_", pol) := risk_category)
+  # Substitute the Beyond-the-AQI interpolation parameters: the joined
+  # open row carries Inf placeholders, but per the TAD FAQ the AQI must
+  # follow the last closed segment's LINE, so the beyond rows interpolate
+  # on that line: anchored at the segment's (bp_low, aqi_low) with the
+  # segment's slope preserved -- aqi_high is the line's value at the
+  # extended bp_high. Anchoring the high end at the open row's own 501
+  # instead would tilt the slope and leave a +1 step at the 500 row edge.
+  if (!is.na(last_closed)) {
+    open_row <- which(is_open)
+    ext_bp_high <- bps$bp_low[open_row] +
+      (bps$bp_high[last_closed] - bps$bp_low[last_closed])
+    subs <- list(
+      bp_low = bps$bp_low[last_closed],
+      bp_high = ext_bp_high,
+      aqi_low = bps$aqi_low[last_closed],
+      aqi_high = bps$aqi_low[last_closed] +
+        (bps$aqi_high[last_closed] - bps$aqi_low[last_closed]) *
+          (ext_bp_high - bps$bp_low[last_closed]) /
+          (bps$bp_high[last_closed] - bps$bp_low[last_closed])
+    )
+    is_beyond <- which(
+      !is.na(dat[[paste0("bp_row_", pol)]]) &
+        dat[[paste0("bp_row_", pol)]] == open_row
+    )
+    for (nm in names(subs)) {
+      dat[[paste0(nm, "_", pol)]][is_beyond] <- subs[[nm]]
+    }
+  }
   dat[[paste0("AQI_", pol)]] <- AQI_formulation(
     obs = dat[[pol]],
     bp_low = dat[[paste0("bp_low_", pol)]],

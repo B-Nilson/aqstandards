@@ -222,7 +222,7 @@ carried the 2024 rows.
   above the 500-threshold returned a constant 301 via interpolation
   against an invented Inf row. Above the last breakpoint row the
   TAD's Hazardous-segment linear relationship continues (TAD FAQ;
-  PM2.5 600 ug/m3 is now 557).
+  PM2.5 600 ug/m3 is now 556).
 - AQI values above 500 are labelled "Beyond the AQI" from 501 (TAD:
   "higher than 500"); the previous levels table duplicated 500 between
   "Hazardous" (301:500) and "Beyond the AQI" (500:5000).
@@ -259,7 +259,30 @@ carried the 2024 rows.
   one label), and the suite's previously failing blocks were unblocked
   by replacing dplyr::across() with dplyr::c_across() in the rowwise
   daily max (mechanical, no behaviour change).
-
+- Fixed truncation to the TAD's reporting digits applying to only
+  ozone: the pollutant digit selectors were built from a single
+  OR-pattern string that prefix-matches no column, so PM2.5, PM10, CO,
+  SO2 and NO2 aggregates skipped the TAD's step-(a) truncation --
+  e.g. PM2.5 9.05 ug/m3 (truncating to 9.0) fell into a breakpoint gap
+  and returned NA instead of AQI 50.
+- When 8-hour ozone averages are derived from supplied hourly ozone,
+  each 8-hour window is attributed to its start hour (the TAD FAQ's 17
+  windows beginning with the 7 am period); previously windows were
+  attributed to their end hour, which moved a midnight-spanning ozone
+  episode to the following day.
+- The above-500 continuation follows the last Hazardous segment's own
+  line (TAD FAQ: "use the same linear relationship that is used for
+  the Hazardous category"), so the index is continuous at 500 and
+  unbounded; the interim extension interpolated between (500.5, 501)
+  and an extended breakpoint -- a slightly tilted line with a one-AQI
+  discontinuity at 500.5 (PM2.5 600 ug/m3 is 556, not 557; 700 ug/m3
+  is 613).
+- Replaced the empty "AQI for PM2.5/PM10/NO2/SO2/CO is correct"
+  placeholders with parametrized boundary sweeps (each breakpoint
+  row's edges and midpoint, expected values derived from the table and
+  anchored by hand-computed TAD arithmetic), plus truncation,
+  multi-pollutant, principal-pollutant and daily completeness
+  contracts (issue #6).
 ## AQHI+
 
 First stable release of the `AQHI_plus()` public contract for downstream
