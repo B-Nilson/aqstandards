@@ -465,3 +465,21 @@ test_that("the 15-valid-hour gate and date-gap filling behave as documented", {
   expect_equal(gapped$AQI, c(112, NA, 53))
   expect_true(all(diff(as.numeric(gapped$date)) > 0))
 })
+
+test_that("negative concentrations are averaged in -- the package-wide input policy gap", {
+  # The TAD does not legislate negative concentrations. Today they are
+  # averaged into daily statistics like any other value, which can
+  # understate a day: 20 hours at 9 ug/m3 plus 4 at -5 ug/m3 averages
+  # 6.667 ug/m3 and scores AQI 37 (Good), the same as a clean 6.667 day.
+  # Pinned here as the current contract; the in-repo AQHI_plus()
+  # precedent treats negatives as missing, and a package-wide input
+  # validation policy (deferred in issue #4) should reconcile the two.
+  hours <- seq(lubridate::ymd_h("2026-06-01 00"), by = "hour", length.out = 24)
+  mixed <- AQI(hours, pm25_1hr_ugm3 = c(rep(9, 20), rep(-5, 4)))
+  expect_equal(mixed$AQI, 37)
+  expect_equal(as.character(mixed$risk_category), "Good")
+  expect_equal(as.character(mixed$principal_pol), "pm25")
+  allneg <- AQI(hours, pm25_1hr_ugm3 = rep(-5, 24))
+  expect_true(is.na(allneg$AQI))
+  expect_true(is.na(allneg$risk_category))
+})
