@@ -1,10 +1,13 @@
 # US AQI ------------------------------------------------------------------
 
+# Sources: EPA Technical Assistance Document for the Report of Daily Air
+# Quality Index (2018),
+# https://www.airnow.gov/sites/default/files/2020-05/aqi-technical-assistance-document-sept2018.pdf
+# (cited "TAD" below), as amended by the AirNow "AQI Equation 2024" post,
+# https://forum.airnowtech.org/t/the-aqi-equation-2024-valid-beginning-may-6th-2024/453
+# (effective May 6, 2024). The package implements the current AQI only.
 # TODO: Include AQI health messaging
 # TODO: add @description, @family
-# TODO: Add reference to https://www.airnow.gov/sites/default/files/2020-05/aqi-technical-assistance-document-sept2018.pdf
-# Example:
-# AQI(o3_8hr_ppm = 0.078, o3_1hr_ppm = 0.104, pm25_24hr_ugm3 = 35.9)
 
 #' Calculate the US AQI from pollutant observations
 #'
@@ -65,7 +68,8 @@ AQI <- function(
   so2_1hr_ppb = NA,
   no2_1hr_ppb = NA
 ) {
-  # TODO: Reference https://forum.airnowtech.org/t/the-aqi-equation-2024-valid-beginning-may-6th-2024/453
+  # Per the AirNow "AQI Equation 2024" post (effective May 6, 2024), which
+  # superseded the 2018 TAD equation only for PM2.5's breakpoints.
 
   # Determine which pollutants provided as input
   AQI_pols <- methods::formalArgs(AQI)[-1]
@@ -144,17 +148,40 @@ AQI <- function(
     all_missing$so2_24hr_ppb <- FALSE
   }
 
-  # Get Daily mean values for all pollutants/averaging times
+  # Daily aggregation. TAD: the AQI is based on "daily air quality
+  # summaries, specifically daily maximums or daily averages" -- hourly
+  # data must not be used directly ("It takes a full 24 hours to obtain an
+  # AQI value (that's 24 hourly values for PM or the max 1-hour or 8-hour
+  # value in a 24-hour period for other pollutants)"). So the 24-hour-basis
+  # inputs (PM 24-hr, SO2 24-hr) aggregate as daily means, and every
+  # hourly-basis input (O3, NO2, SO2/CO 1-hr, and derived rolling 8-hr) as
+  # daily maxima. The TAD states no numeric completeness requirement for a
+  # valid day; the mean()s here keep the pre-audit tolerant behaviour
+  # (documented, not sourced). Ozone's daily maximum 8-hour average is the
+  # max over the 17 windows beginning 7 am (TAD FAQ), which the supplied
+  # o3_8hr_ppm series is expected to already embody.
+  daily_mean_cols <- c("pm25_24hr_ugm3", "pm10_24hr_ugm3", "so2_24hr_ppb")
   dat <- dat |>
     dplyr::group_by(
       date = .data$date |>
         lubridate::floor_date("days")
     ) |>
+    # Per-day max of the 1-hour SO2 series, computed on the raw hourly
+    # values BEFORE summarise -- inside summarise, later expressions see
+    # already-summarised columns, so the max there would be the max of the
+    # daily mean. This feeds the fixed-at-200 exception below.
+    dplyr::mutate(
+      so2_1hr_max_ppb = suppressWarnings(max(so2_1hr_ppb, na.rm = TRUE))
+    ) |>
     dplyr::summarise(
       .groups = "drop",
       dplyr::across(
-        dplyr::everything(),
+        dplyr::all_of(daily_mean_cols),
         \(x) mean(x, na.rm = TRUE)
+      ),
+      dplyr::across(
+        -dplyr::all_of(daily_mean_cols),
+        \(x) suppressWarnings(max(x, na.rm = TRUE))
       )
     ) |>
     # Truncate daily means
@@ -173,8 +200,9 @@ AQI <- function(
       )
     )
 
-  # Calculate AQI for each pollutant provided
-  pols <- names(dat)[-1]
+  # Calculate AQI for each pollutant provided (so2_1hr_max_ppb is the
+  # daily-max helper for the SO2 exception, not a classifiable pollutant)
+  pols <- setdiff(names(dat), c("date", "so2_1hr_max_ppb"))
   for (pol in pols) {
     if (!all_missing[[pol]]) {
       dat <- AQI_from_con(dat, pol)
@@ -187,15 +215,32 @@ AQI <- function(
   names(AQI_cols) <- (AQI_cols |>
     stringr::str_split("_", simplify = TRUE))[, 2]
 
+  # SO2 exception (TAD, "How do I calculate AQI values for SO2?"): on a day
+  # where the daily max 1-hour concentration is at or above 305 ppb but the
+  # 24-hour average is not, use 200 for both AQI breakpoints -- "This
+  # effectively fixes the AQI value at 200 exactly, which ensures that you
+  # get the highest possible AQI value associated with your 1-hour
+  # concentration on such days."
+  if (!all_missing$so2_1hr_ppb) {
+    exception <- !is.na(dat$so2_1hr_max_ppb) &
+      dat$so2_1hr_max_ppb >= 305 &
+      (is.na(dat$so2_24hr_ppb) | dat$so2_24hr_ppb < 305)
+    dat$AQI_so2_1hr_ppb[exception] <- 200
+    dat$cat_so2_1hr_ppb[exception] <- "Unhealthy"
+  }
+
   # Set hourly AQI to the highest of the calculated values
   dat |>
     dplyr::rowwise() |>
     dplyr::mutate(
-      AQI = handyr::max(
-        na.rm = TRUE,
-        dplyr::across(dplyr::all_of(AQI_cols))
-      ) |>
-        handyr::swap(Inf, with = NA), # TODO: will this ever be Inf?
+      # An all-NA row (every sub-index missing) is a documented NA result,
+      # not a warning-worthy event; max() warns, so silence it here.
+      AQI = suppressWarnings(max(
+        dplyr::c_across(dplyr::all_of(unname(AQI_cols))),
+        na.rm = TRUE
+      )) |>
+        handyr::swap(Inf, with = NA) |>
+        handyr::swap(-Inf, with = NA),
       risk_category = AQI_risk_category(.data$AQI)
     ) |>
     get_AQI_principal_pol(AQI_cols) |>
@@ -204,6 +249,9 @@ AQI <- function(
 }
 
 ## AQI Helpers ------------------------------------------------------------
+# EPA TAD 2018 Table 4 / 2024 equation post (AQI category index ranges).
+# "Beyond the AQI" is defined for AQI *higher than* 500 (TAD FAQ), so it
+# starts at 501 -- the previous 301:500 / 500:5000 ranges duplicated 500.
 aqi_levels <- list(
   "Good" = 0:50,
   "Moderate" = 51:100,
@@ -211,7 +259,7 @@ aqi_levels <- list(
   "Unhealthy" = 151:200,
   "Very Unhealthy" = 201:300,
   "Hazardous" = 301:500,
-  "Beyond the AQI" = 500:5000
+  "Beyond the AQI" = 501:5000
 )
 
 # Returns Risk category when AQI value provided
@@ -242,58 +290,89 @@ AQI_bp_cat <- function(obs, bps) {
   )
 }
 
-# When provided concentrations and corresponding breakpoints, return AQI
+# When provided concentrations and corresponding breakpoints, return AQI.
+# EPA TAD 2018 (step d): "Round the index to the nearest integer"; the 2024
+# equation post likewise: "The resulting AQI is rounded to the nearest whole
+# number". (The TAD's own worked example prints 148 for 147.487, but the
+# normative text of both eras says round.) Ties at .5: the sources are
+# silent, so conventional half-up rounding is the documented interpretation
+# choice (R's round() would tie-break to even).
 AQI_formulation <- function(obs, bp_low, bp_high, aqi_low, aqi_high) {
-  ceiling(
-    (aqi_high - aqi_low) / (bp_high - bp_low) * (obs - bp_low) + aqi_low
+  floor(
+    (aqi_high - aqi_low) / (bp_high - bp_low) * (obs - bp_low) + aqi_low + 0.5
   )
 }
 
-# Workhorse function to determine risk category, append breakponints, then calc AQI
+# Workhorse function to classify concentrations into breakpoint rows,
+# append the corresponding breakpoints, and calculate the AQI sub-index
 AQI_from_con <- function(dat, pol) {
-  cols <- c("cat_", "AQI_") |> paste0(pol)
-  dat[cols] <- NA # TODO: is this necessary?
+  bps <- AQI_breakpoints[[pol]]
+  if (is.null(bps)) {
+    # No breakpoint table: this column is an intermediate input only (e.g.
+    # pm25_1hr_ugm3 feeding the 24-hour mean), so it has no sub-index.
+    dat[[paste0("cat_", pol)]] <- NA_character_
+    dat[[paste0("AQI_", pol)]] <- NA_real_
+    return(dat)
+  }
+  # "Beyond the AQI" rows (bp_high = Inf): per the TAD FAQ, concentrations
+  # above the Hazardous range "use the same linear relationship that is
+  # used for the Hazardous category" -- so extend the final closed
+  # segment's slope through the open row.
+  is_open <- is.infinite(bps$bp_high)
+  if (any(is_open)) {
+    last_closed <- max(which(!is_open))
+    bps$bp_high[is_open] <-
+      bps$bp_low[is_open] + (bps$bp_high[last_closed] - bps$bp_low[last_closed])
+    bps$aqi_high[is_open] <-
+      bps$aqi_low[is_open] + (bps$aqi_high[last_closed] - bps$aqi_low[last_closed])
+  }
+  # Classify each concentration into one breakpoint row. Missing values
+  # stay missing (an NA concentration is an NA sub-index, never 0), and
+  # values in a TAD table's "blank place" (a gap between rows, e.g. 8-hour
+  # ozone above its 0.200 ppm cap) match no row and stay NA.
+  bp_row <- apply(
+    outer(dat[[pol]], bps$bp_low, `>=`) & outer(dat[[pol]], bps$bp_high, `<=`),
+    1,
+    \(hits) {
+      if (any(is.na(hits))) NA_integer_
+      else if (any(hits)) which(hits)
+      else NA_integer_
+    }
+  )
+  dat[[paste0("bp_row_", pol)]] <- bp_row
   dat <- dat |>
-    # Determine the risk category based on the concentrations and break points
-    dplyr::mutate(dplyr::across(
-      dplyr::all_of(cols[1]),
-      \(x) {
-        AQI_bp_cat(
-          obs = dat[[pol]] |>
-            handyr::swap(NA, with = 0),
-          bps = AQI_breakpoints[[pol]]
-        )
-      }
-    )) |>
-    # Append the corresponding break points and AQI breaks for each hour
     dplyr::left_join(
-      AQI_breakpoints[[pol]] |>
+      bps |>
+        dplyr::mutate(.bp_row = dplyr::row_number()) |>
         dplyr::rename_with(.cols = 2:5, \(x) paste0(x, "_", pol)),
-      by = dplyr::join_by(!!cols[1] == "risk_category")
+      by = stats::setNames(".bp_row", paste0("bp_row_", pol))
     )
-  # Calculate AQI for each hour based on those
-  dat |>
-    dplyr::mutate(dplyr::across(
-      dplyr::all_of(cols[2]),
-      \(x) {
-        dat[[pol]] |>
-          AQI_formulation(
-            bp_low = dat[[paste0("bp_low_", pol)]],
-            bp_high = dat[[paste0("bp_high_", pol)]],
-            aqi_low = dat[[paste0("aqi_low_", pol)]],
-            aqi_high = dat[[paste0("aqi_high_", pol)]]
-          )
-      }
-    ))
+  # Rename the joined row label for provenance and calculate the sub-index
+  dat <- dat |> dplyr::rename(!!paste0("cat_", pol) := risk_category)
+  dat[[paste0("AQI_", pol)]] <- AQI_formulation(
+    obs = dat[[pol]],
+    bp_low = dat[[paste0("bp_low_", pol)]],
+    bp_high = dat[[paste0("bp_high_", pol)]],
+    aqi_low = dat[[paste0("aqi_low_", pol)]],
+    aqi_high = dat[[paste0("aqi_high_", pol)]]
+  )
+  dat
 }
 
-# Define breakpoints for AQI formulation
+# Classify concentrations and compute each pollutant sub-index. The
+# breakpoint tables quote the EPA TAD 2018 Table 5 (Table 4 of the
+# document text) with the 2024 PM2.5 revision (effective May 6, 2024;
+# package implements the current AQI only -- see NEWS). Each TAD row is
+# one table row; the TAD's two Hazardous rows (301-400, 401-500) are kept
+# separate so interpolation follows the sourced segments. An open-ended
+# final row (bp_high = Inf, aqi_low = 501) marks a table that extends
+# "Beyond the AQI": per the TAD FAQ, values above the final closed row
+# continue the final segment's linear relationship. Tables without one
+# are capped where the TAD ends them: 8-hour O3 defines nothing >= 301
+# (TAD Table 5 footnote 2), 1-hour SO2 nothing >= 201, and 24-hour SO2
+# nothing above 1004 ppb (TAD "How do I calculate AQI values for SO2?").
 AQI_breakpoints <- list(
   ## 8 hour mean ozone
-  # 8-hour O3 values do not define higher AQI values (≥ 301).
-  # AQI values of 301 or higher are calculated with 1-hour O3 concentrations.
-  # The highest of the 1hr/8hr AQI for ozone is used
-  # (1 hour is only really used for some areas)
   o3_8hr_ppm = data.frame(
     risk_category = names(aqi_levels)[1:5],
     bp_low = c(0, 0.055, 0.071, 0.086, 0.106),
@@ -302,64 +381,69 @@ AQI_breakpoints <- list(
     aqi_high = c(50, 100, 150, 200, 300)
   ),
   ## 1 Hour Mean Ozone
-  # 1-hour O3 values do not define Good-Moderate AQI values (< 101).
+  # 1-hour O3 has no Good/Moderate rows: concentrations below 0.125 ppm
+  # are disregarded (TAD "What do I do with concentrations ... blank
+  # places in the table?").
   o3_1hr_ppm = data.frame(
-    risk_category = names(aqi_levels)[3:7],
-    bp_low = c(0.125, 0.165, 0.205, 0.405, 0.605),
-    bp_high = c(0.164, 0.204, 0.404, 0.504, Inf),
-    aqi_low = c(101, 151, 201, 301, 301),
-    aqi_high = c(150, 200, 300, 500, 500)
+    risk_category = names(aqi_levels)[c(3:5, 6, 6, 7)],
+    bp_low = c(0.125, 0.165, 0.205, 0.405, 0.505, 0.605),
+    bp_high = c(0.164, 0.204, 0.404, 0.504, 0.604, Inf),
+    aqi_low = c(101, 151, 201, 301, 401, 501),
+    aqi_high = c(150, 200, 300, 400, 500, Inf)
   ),
-  ## 24 Hour Mean Fine Particulate Matter
-  # If a different SHL for PM2.5 is promulgated, Unhealthy and above will change accordingly.
+  ## 24 Hour Mean Fine Particulate Matter (2024 revision, effective May 6, 2024)
   pm25_24hr_ugm3 = data.frame(
-    risk_category = names(aqi_levels)[1:7],
-    bp_low = c(0, 9.1, 35.5, 55.5, 125.5, 225.5, 325.5),
-    bp_high = c(9, 35.4, 55.4, 125.4, 225.4, 325.4, Inf),
-    aqi_low = c(0, 51, 101, 151, 201, 301, 301),
-    aqi_high = c(50, 100, 150, 200, 300, 500, 500)
+    risk_category = names(aqi_levels)[c(1:5, 6, 6, 7)],
+    bp_low = c(0, 9.1, 35.5, 55.5, 125.5, 225.5, 325.5, 500.5),
+    bp_high = c(9, 35.4, 55.4, 125.4, 225.4, 325.4, 500.4, Inf),
+    aqi_low = c(0, 51, 101, 151, 201, 301, 401, 501),
+    aqi_high = c(50, 100, 150, 200, 300, 400, 500, Inf)
   ),
-  ## 24 Hour Mean Fine-Coarse Particulate Matter
+  ## 24 Hour Mean Coarse Particulate Matter
   pm10_24hr_ugm3 = data.frame(
-    risk_category = names(aqi_levels)[1:7],
-    bp_low = c(0, 55, 155, 255, 355, 425, 605),
-    bp_high = c(54, 154, 254, 354, 424, 604, Inf),
-    aqi_low = c(0, 51, 101, 151, 201, 301, 301),
-    aqi_high = c(50, 100, 150, 200, 300, 500, 500)
+    risk_category = names(aqi_levels)[c(1:5, 6, 6, 7)],
+    bp_low = c(0, 55, 155, 255, 355, 425, 505, 605),
+    bp_high = c(54, 154, 254, 354, 424, 504, 604, Inf),
+    aqi_low = c(0, 51, 101, 151, 201, 301, 401, 501),
+    aqi_high = c(50, 100, 150, 200, 300, 400, 500, Inf)
   ),
   ## 8 Hour Mean Carbon Monoxide
   co_8hr_ppm = data.frame(
-    risk_category = names(aqi_levels)[1:7],
-    bp_low = c(0, 4.5, 9.5, 12.5, 15.5, 30.5, 50.5),
-    bp_high = c(4.4, 9.4, 12.4, 15.4, 30.4, 50.4, Inf),
-    aqi_low = c(0, 51, 101, 151, 201, 301, 301),
-    aqi_high = c(50, 100, 150, 200, 300, 500, 500)
+    risk_category = names(aqi_levels)[c(1:5, 6, 6, 7)],
+    bp_low = c(0, 4.5, 9.5, 12.5, 15.5, 30.5, 40.5, 50.5),
+    bp_high = c(4.4, 9.4, 12.4, 15.4, 30.4, 40.4, 50.4, Inf),
+    aqi_low = c(0, 51, 101, 151, 201, 301, 401, 501),
+    aqi_high = c(50, 100, 150, 200, 300, 400, 500, Inf)
   ),
   ## 1 Hour Mean Sulfur Dioxide
-  # 1-hour SO2 values do not define higher AQI values (≥ 200).
+  # 1-hour SO2 defines nothing >= 201: the upper end of the SO2 AQI uses
+  # 24-hour average concentrations (TAD "How do I calculate AQI values
+  # for SO2?"). A daily max 1-hour concentration at or above 305 ppb
+  # whose 24-hour average stays below 305 ppb is handled by the wrapper
+  # (fixed at AQI 200 per the TAD).
   so2_1hr_ppb = data.frame(
-    risk_category = names(aqi_levels)[c(1:4)],
+    risk_category = names(aqi_levels)[1:4],
     bp_low = c(0, 36, 76, 186),
     bp_high = c(35, 75, 185, 304),
     aqi_low = c(0, 51, 101, 151),
     aqi_high = c(50, 100, 150, 200)
   ),
   ## 24 Hour Mean Sulfur Dioxide
-  # AQI values of 200 or greater are calculated with 24-hour SO2 concentrations.
+  # AQI >= 201 is calculated with 24-hour SO2 concentrations.
   so2_24hr_ppb = data.frame(
-    risk_category = names(aqi_levels)[5:7],
-    bp_low = c(305, 605, 1005),
-    bp_high = c(604, 1004, Inf),
-    aqi_low = c(201, 301, 301),
-    aqi_high = c(300, 500, 500)
+    risk_category = names(aqi_levels)[c(5, 6, 6, 7)],
+    bp_low = c(305, 605, 805, 1005),
+    bp_high = c(604, 804, 1004, Inf),
+    aqi_low = c(201, 301, 401, 501),
+    aqi_high = c(300, 400, 500, Inf)
   ),
   ## 1 Hour Mean Nitrogen Dioxide
   no2_1hr_ppb = data.frame(
-    risk_category = names(aqi_levels)[1:7],
-    bp_low = c(0, 54, 101, 361, 650, 1250, 2050),
-    bp_high = c(53, 100, 360, 649, 1249, 2049, Inf),
-    aqi_low = c(0, 51, 101, 151, 201, 301, 301),
-    aqi_high = c(50, 100, 150, 200, 300, 500, 500)
+    risk_category = names(aqi_levels)[c(1:5, 6, 6, 7)],
+    bp_low = c(0, 54, 101, 361, 650, 1250, 1650, 2050),
+    bp_high = c(53, 100, 360, 649, 1249, 1649, 2049, Inf),
+    aqi_low = c(0, 51, 101, 151, 201, 301, 401, 501),
+    aqi_high = c(50, 100, 150, 200, 300, 400, 500, Inf)
   )
 )
 
