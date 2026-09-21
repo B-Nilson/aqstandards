@@ -144,10 +144,19 @@ AQI <- function(
     all_missing$so2_24hr_ppb <- FALSE
   }
 
-  # Daily aggregation (EPA TAD: the AQI is based on "daily air quality
-  # summaries, specifically daily maximums or daily averages"). The 1-hour
-  # SO2 daily max is captured here for the fixed-at-200 exception below;
-  # the remaining daily-max metrics are converted in the follow-up commit.
+  # Daily aggregation. TAD: the AQI is based on "daily air quality
+  # summaries, specifically daily maximums or daily averages" -- hourly
+  # data must not be used directly ("It takes a full 24 hours to obtain an
+  # AQI value (that's 24 hourly values for PM or the max 1-hour or 8-hour
+  # value in a 24-hour period for other pollutants)"). So the 24-hour-basis
+  # inputs (PM 24-hr, SO2 24-hr) aggregate as daily means, and every
+  # hourly-basis input (O3, NO2, SO2/CO 1-hr, and derived rolling 8-hr) as
+  # daily maxima. The TAD states no numeric completeness requirement for a
+  # valid day; the mean()s here keep the pre-audit tolerant behaviour
+  # (documented, not sourced). Ozone's daily maximum 8-hour average is the
+  # max over the 17 windows beginning 7 am (TAD FAQ), which the supplied
+  # o3_8hr_ppm series is expected to already embody.
+  daily_mean_cols <- c("pm25_24hr_ugm3", "pm10_24hr_ugm3", "so2_24hr_ppb")
   dat <- dat |>
     dplyr::group_by(
       date = .data$date |>
@@ -163,8 +172,12 @@ AQI <- function(
     dplyr::summarise(
       .groups = "drop",
       dplyr::across(
-        dplyr::everything(),
+        dplyr::all_of(daily_mean_cols),
         \(x) mean(x, na.rm = TRUE)
+      ),
+      dplyr::across(
+        -dplyr::all_of(daily_mean_cols),
+        \(x) suppressWarnings(max(x, na.rm = TRUE))
       )
     ) |>
     # Truncate daily means

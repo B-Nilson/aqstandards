@@ -92,6 +92,55 @@ test_that("SO2: the TAD's fixed-at-200 exception and the 24-hour upper end", {
   expect_equal(AQI(d1, so2_1hr_ppb = 400)$AQI, 200)
 })
 
+test_that("hourly-basis pollutants aggregate by daily maximum, per the TAD", {
+  # TAD: an AQI value needs "the max 1-hour or 8-hour value in a 24-hour
+  # period" for non-PM pollutants. The old code averaged the hourly
+  # series, hiding intra-day peaks: 80 ppb NO2 for one hour among 10s
+  # averaged to 14.2 ppb (AQI 13) instead of using the daily max.
+  d <- lubridate::ymd_h("2026-06-01 00") + lubridate::hours(0:47)
+  no2 <- c(20, 80, 30, rep(10, 21), rep(10, 24))
+  out <- AQI(dates = d, no2_1hr_ppb = no2)
+  # Day 1 max 80 ppb: 51 + 49/46 * (80 - 54) = 78.7 -> 79 (Moderate);
+  # day 2 max 10 ppb: 50/53 * 10 = 9.4 -> 9 (Good).
+  expect_equal(out$AQI, c(79, 9))
+})
+
+test_that("24-hour-basis pollutants aggregate by daily mean, per the TAD", {
+  # TAD: "24 hourly values for PM" -- PM2.5/PM10 (and the supplied SO2
+  # 24-hour average) remain daily averages, unlike the hourly bases.
+  d <- lubridate::ymd_h("2026-06-01 00") + lubridate::hours(0:47)
+  pm25 <- c(rep(60, 12), rep(20, 12), rep(20, 12), rep(10, 12))
+  out <- AQI(dates = d, pm25_24hr_ugm3 = pm25)
+  # Day 1 mean 40.0: 101 + 49/19.9 * (40 - 35.5) = 112.1 -> 112 (2024
+  # table, Unhealthy for Sensitive Groups); day 2 mean 15.0:
+  # 51 + 49/26.3 * (15 - 9.1) = 62.0 -> 62 (Moderate).
+  expect_equal(out$AQI, c(112, 62))
+})
+
+test_that("ozone daily maxima capture night-time 8-hour peaks", {
+  # TAD FAQ: the daily maximum 8-hour average is the max over the 17
+  # windows beginning 7 am -- an overnight plateau belongs to the day it
+  # peaks in. A 0.075 ppm small-hours peak must not be averaged away
+  # across the day (old behaviour: 0.0488 daily mean -> AQI 44).
+  d <- lubridate::ymd_h("2026-06-01 00") + lubridate::hours(0:47)
+  o3 <- c(rep(0.075, 6), rep(0.040, 18), rep(0.040, 24))
+  out <- AQI(dates = d, o3_8hr_ppm = o3)
+  # Day 1 max 0.075 ppm: 101 + 49/0.014 * (0.075 - 0.071) = 115;
+  # day 2 max 0.040 ppm: 50/0.054 * 0.040 = 37.
+  expect_equal(out$AQI, c(115, 37))
+})
+
+test_that("hourly PM2.5 input truncates after daily aggregation", {
+  # TAD step a truncates the daily concentration entering the table.
+  # 23 hours of 4 plus one hour of 60 ug/m3: the 24-hour mean is 6.333,
+  # truncated to 6.3 (2024 Good band 0-9.0: 50/9 * 6.3 = 35).
+  d <- lubridate::ymd_h("2026-06-01 00") + lubridate::hours(0:23)
+  expect_equal(
+    suppressWarnings(AQI(dates = d, pm25_1hr_ugm3 = c(rep(4, 23), 60)))$AQI,
+    35
+  )
+})
+
 test_that("missing concentrations yield NA sub-indices, never zero", {
   # Concentrations are classified as given: an NA concentration is an NA
   # sub-index (the old code mapped NA to 0 before classification, scoring

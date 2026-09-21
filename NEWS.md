@@ -242,6 +242,18 @@ carried the 2024 rows.
   exception is applied conservatively, fixing the AQI at 200 -- "the
   highest possible AQI value associated with your 1-hour
   concentration" -- rather than leaving it NA.
+- Hourly-basis inputs now aggregate by daily maximum before computing
+  the AQI (TAD: an AQI value requires "the max 1-hour or 8-hour value
+  in a 24-hour period" for non-PM pollutants; ozone's daily maximum
+  8-hour average is the max over the 17 windows beginning 7 am per the
+  TAD FAQ, which a supplied 8-hour series is expected to embody). The
+  previous code averaged the hourly series, hiding intra-day peaks
+  (80 ppb NO2 for one hour among 10s scored AQI 13; it now uses the
+  daily max, 79). The 24-hour-basis inputs (PM2.5/PM10 and the supplied
+  SO2 24-hour average) remain daily averages, per the same TAD passage.
+  The TAD states no numeric completeness requirement for a valid day;
+  the previous tolerant aggregation of partial days is kept and
+  documented rather than gated.
 - Internal: sub-index classification joins breakpoint rows by row
   index instead of category label (the TAD's two Hazardous rows share
   one label), and the suite's previously failing blocks were unblocked
