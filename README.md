@@ -163,7 +163,29 @@ obs$date |> AQHI(pm25_1hr_ugm3 = obs$pm25)
 
 ## U.S.A. Air Quality Index (AQI)
 
-<!-- TODO: add writeup on standard -->
+`AQI()` computes the daily US AQI of EPA's Technical Assistance Document
+for the Report of Daily Air Quality Index (2018, "TAD"), as amended by
+the AirNow "AQI Equation 2024" post (effective May 6, 2024; the
+revision changed PM2.5's breakpoints only). The package implements the
+current AQI.
+
+Per the TAD, the AQI is based on daily summaries: the 24-hour-basis
+inputs (PM2.5, PM10, and a supplied SO2 24-hour average) aggregate as
+daily means, and the hourly-basis inputs (O3, NO2, and SO2/CO 1-hour,
+plus derived rolling 8-hour windows) as daily maxima. Each daily
+concentration is truncated to its pollutant's decimal places (O3 3,
+PM2.5 and CO 1, PM10/SO2/NO2 0), classified into its TAD Table 5
+breakpoint segment, and the interpolated index is rounded to the
+nearest integer (half up). Concentrations above the Hazardous range
+continue the final 401-500 segment's linear relationship, labelling
+above 500 "Beyond the AQI"; 8-hour O3 defines no AQI of 301 or above.
+For SO2, a day whose daily max 1-hour concentration reaches 305 ppb
+while its 24-hour average does not is fixed at AQI 200. The reported
+AQI is the maximum sub-index across pollutants, with the principal
+pollutant named.
+
+Sources: [TAD (2018)](https://www.airnow.gov/sites/default/files/2020-05/aqi-technical-assistance-document-sept2018.pdf)
+and the [AQI Equation 2024 post](https://forum.airnowtech.org/t/the-aqi-equation-2024-valid-beginning-may-6th-2024/453).
 
 ``` r
 library(aqstandards)

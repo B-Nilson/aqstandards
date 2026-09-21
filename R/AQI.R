@@ -1,10 +1,13 @@
 # US AQI ------------------------------------------------------------------
 
+# Sources: EPA Technical Assistance Document for the Report of Daily Air
+# Quality Index (2018),
+# https://www.airnow.gov/sites/default/files/2020-05/aqi-technical-assistance-document-sept2018.pdf
+# (cited "TAD" below), as amended by the AirNow "AQI Equation 2024" post,
+# https://forum.airnowtech.org/t/the-aqi-equation-2024-valid-beginning-may-6th-2024/453
+# (effective May 6, 2024). The package implements the current AQI only.
 # TODO: Include AQI health messaging
 # TODO: add @description, @family
-# TODO: Add reference to https://www.airnow.gov/sites/default/files/2020-05/aqi-technical-assistance-document-sept2018.pdf
-# Example:
-# AQI(o3_8hr_ppm = 0.078, o3_1hr_ppm = 0.104, pm25_24hr_ugm3 = 35.9)
 
 #' Calculate the US AQI from pollutant observations
 #'
@@ -65,7 +68,8 @@ AQI <- function(
   so2_1hr_ppb = NA,
   no2_1hr_ppb = NA
 ) {
-  # TODO: Reference https://forum.airnowtech.org/t/the-aqi-equation-2024-valid-beginning-may-6th-2024/453
+  # Per the AirNow "AQI Equation 2024" post (effective May 6, 2024), which
+  # superseded the 2018 TAD equation only for PM2.5's breakpoints.
 
   # Determine which pollutants provided as input
   AQI_pols <- methods::formalArgs(AQI)[-1]
