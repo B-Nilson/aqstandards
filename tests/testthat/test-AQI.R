@@ -13,6 +13,23 @@ test_that("AQI returns expected output", {
 # TODO: write test
 test_that("AQI for PM2.5 is correct", {})
 
+test_that("truncation applies to every pollutant before classification", {
+  # TAD step (a): "Truncate ... to the number of decimal places shown in
+  # the breakpoint table" -- PM2.5/CO 1, PM10/SO2/NO2 0, O3 3 digits.
+  # The old code passed a single piped string to starts_with(), which
+  # matches nothing, silently disabling truncation for every pollutant
+  # except O3: sub-boundary concentrations fell into the tables' gaps and
+  # returned NA instead of the truncated row's value.
+  expect_equal(AQI(Sys.time(), pm25_24hr_ugm3 = 9.05)$AQI, 50)
+  expect_equal(AQI(Sys.time(), so2_1hr_ppb = 35.7)$AQI, 50)
+  expect_equal(AQI(Sys.time(), pm10_24hr_ugm3 = 54.5)$AQI, 50)
+  expect_equal(AQI(Sys.time(), co_8hr_ppm = 4.45)$AQI, 50)
+  # Truncation must not eat a boundary: 9.1 truncates to itself and is
+  # Moderate, 9.05 truncates to 9.0 and stays Good.
+  expect_equal(AQI(Sys.time(), pm25_24hr_ugm3 = 9.1)$AQI, 51)
+  expect_equal(AQI(Sys.time(), pm25_24hr_ugm3 = 35.5)$AQI, 101)
+})
+
 test_that("Hazardous interpolation follows the TAD's two 301-400 / 401-500 segments", {
   # EPA TAD Table 5 (2024 PM2.5 revision): 225.5-325.4 ug/m3 -> 301-400 and
   # 325.5-500.4 ug/m3 -> 401-500. The old single merged row carried the
@@ -90,6 +107,26 @@ test_that("SO2: the TAD's fixed-at-200 exception and the 24-hour upper end", {
   # from >= 15 hourly values), the exception is applied conservatively --
   # a single 400 ppb hour is fixed at 200 rather than left NA.
   expect_equal(AQI(d1, so2_1hr_ppb = 400)$AQI, 200)
+})
+
+test_that("derived 8-hour windows are attributed by start hour, per the TAD", {
+  # TAD FAQ: the daily maximum 8-hour average runs over "the 17 consecutive
+  # moving 8-hour periods in each day, beginning with the 8-hour period
+  # from 7am to 3pm" -- windows are identified by their start hour, changed
+  # with the 2015 ozone standard "to avoid double-counting an exceedance
+  # from a single, short-term episode that spans the nighttime hours of
+  # the first day into the early hours of the second day". The old code
+  # kept end-attributed window values, re-attributing a midnight-spanning
+  # episode to the day after it began.
+  d <- lubridate::ymd_h("2026-06-01 00") + lubridate::hours(0:47)
+  # Plateau 20:00 day 1 - 03:00 day 2: only day 1 has start-hours (20-23)
+  # inside the plateau, so the episode belongs to day 1 (133 = 0.080 ppm);
+  # day 2's start-hour windows are all 0.030 (28 = Good).
+  plateau <- c(rep(0.030, 20), rep(0.080, 8), rep(0.030, 20))
+  expect_equal(AQI(dates = d, o3_1hr_ppm = plateau)$AQI, c(133, 28))
+  # Control: the same plateau shifted to 08:00-15:00 stays within one day.
+  midday <- c(rep(0.030, 8), rep(0.080, 8), rep(0.030, 32))
+  expect_equal(AQI(dates = d, o3_1hr_ppm = midday)$AQI, c(133, 28))
 })
 
 test_that("hourly-basis pollutants aggregate by daily maximum, per the TAD", {

@@ -112,8 +112,7 @@ AQI <- function(
     !all_missing$o3_1hr_ppm &
     sum(!is.na(dat$o3_1hr_ppm)) >= 5
   if (needs_o3_8hr) {
-    dat$o3_8hr_ppm <- dat$o3_1hr_ppm |>
-      handyr::rolling("mean", .width = 8, .min_non_na = 5)
+    dat$o3_8hr_ppm <- AQI_o3_8hr_from_1hr(dat$date, dat$o3_1hr_ppm)
     all_missing$o3_8hr_ppm <- FALSE
   }
   needs_pm25_24hr <- all_missing$pm25_24hr_ugm3 &
@@ -184,18 +183,25 @@ AQI <- function(
         \(x) suppressWarnings(max(x, na.rm = TRUE))
       )
     ) |>
-    # Truncate daily means
+    # Truncate daily means (TAD step (a), "Truncate ... to the number of
+    # decimal places shown in the breakpoint table"). Each pollutant's
+    # digits are the decimal places of its table's bp values: O3 3, PM2.5
+    # and CO 1, PM10/SO2/NO2 0. CAUTION: tidyselect's starts_with() takes
+    # one pattern PER PREFIX, not a single regex/piped string --
+    # starts_with("pm25|co") is a literal-prefix match that selects
+    # nothing and silently disabled these truncations (defect fixed with
+    # tests in the issue-#6 suite).
     dplyr::mutate(
       dplyr::across(
         dplyr::starts_with("o3"),
         \(x) handyr::truncate(x, digits = 3)
       ),
       dplyr::across(
-        dplyr::starts_with("pm25|co"),
+        dplyr::starts_with(c("pm25", "co")),
         \(x) handyr::truncate(x, digits = 1)
       ),
       dplyr::across(
-        dplyr::starts_with("so2|no2|pm10"),
+        dplyr::starts_with(c("so2", "no2", "pm10")),
         \(x) handyr::truncate(x, digits = 0)
       )
     )
@@ -301,6 +307,30 @@ AQI_formulation <- function(obs, bp_low, bp_high, aqi_low, aqi_high) {
   floor(
     (aqi_high - aqi_low) / (bp_high - bp_low) * (obs - bp_low) + aqi_low + 0.5
   )
+}
+
+# Derive 8-hour averages from the 1-hour O3 series when a caller supplies
+# hourly values. TAD FAQ: the daily maximum 8-hour average "is based on the
+# 17 consecutive moving 8-hour periods in each day, beginning with the
+# 8-hour period from 7am to 3pm, and ending with the 8-hour period from
+# 11pm to 7am", changed with the 2015 ozone standard "to avoid
+# double-counting an exceedance from a single, short-term episode that
+# spans the nighttime hours of the first day into the early hours of the
+# second day". Each window is identified by its START hour (7am-11pm), so
+# a start hour's value is the mean of the following 8 hourly values and
+# non-start hours (00:00-06:00) are not computed windows: a window
+# spilling past midnight belongs to the previous day's start hour, and
+# keeping end-attributed values would re-attribute such an episode to the
+# wrong day. Windows require >= 5 valid of 8 hours (pre-existing tolerance,
+# documented).
+AQI_o3_8hr_from_1hr <- function(dates, x, start_hours = 7:23) {
+  forward_windows <- suppressWarnings(
+    handyr::rolling(x, "mean", .width = 8, .direction = "forward", .min_non_na = 5)
+  )
+  out <- rep(NA_real_, length(x))
+  keep <- as.integer(format(dates, "%H")) %in% start_hours
+  out[keep] <- forward_windows[keep]
+  out
 }
 
 # Workhorse function to classify concentrations into breakpoint rows,
